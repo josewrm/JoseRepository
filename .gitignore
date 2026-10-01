@@ -4,3 +4,4 @@ exports/
 outcome-reports/
 *.sqlite
 *.sqlite-journal
+dist/

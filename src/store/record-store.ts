@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
-import { transaction } from "./db.ts";
+import type { SqlDatabase } from "./memory-db.ts";
+import { transaction } from "./memory-db.ts";
 import {
   GENESIS_HASH,
   JarvisError,
@@ -101,12 +100,12 @@ const NON_TERMINAL_ALLOWED_AFTER_COMPLETION = new Set([
 ]);
 
 export class RecordStore {
-  db: DatabaseSync;
+  db: SqlDatabase;
   clock: () => Date;
   authorize: (authorization: string) => boolean;
   maxPastSkewMs: number;
 
-  constructor(db: DatabaseSync, options: StoreOptions = {}) {
+  constructor(db: SqlDatabase, options: StoreOptions = {}) {
     this.db = db;
     this.clock = options.clock ?? (() => new Date());
     this.authorize = options.authorize ?? (() => true);
@@ -1150,7 +1149,7 @@ export class RecordStore {
   writeMemory(proposal: ProtocolRecord): void {
     this.db
       .prepare("INSERT OR IGNORE INTO memory (id, memory_proposal_id, memory_scope, memory_type, content_json, accepted_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(`memory-${randomUUID().slice(0, 8)}`, proposal.id, proposal.memory_scope, proposal.memory_type, JSON.stringify(proposal.content), this.nowIso());
+      .run(`memory-${globalThis.crypto.randomUUID().slice(0, 8)}`, proposal.id, proposal.memory_scope, proposal.memory_type, JSON.stringify(proposal.content), this.nowIso());
   }
 
   listMemory(scope?: string): { memoryScope: string; memoryType: string; content: any; proposalId: string }[] {

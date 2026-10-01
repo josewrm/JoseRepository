@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "../src/store/db.ts";
 import { RecordStore } from "../src/store/record-store.ts";
+import { MemoryDatabase } from "../src/store/memory-db.ts";
 import { Apply2InterviewService } from "../src/app/service.ts";
 
 export const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -21,8 +22,8 @@ export function fakeFetch(pages: Record<string, { status?: number; body: string;
   }) as typeof fetch;
 }
 
-export function makeService(pages: Parameters<typeof fakeFetch>[0], clock?: () => Date) {
-  const db = openDatabase(":memory:");
+export function makeService(pages: Parameters<typeof fakeFetch>[0], clock?: () => Date, backend: "sqlite" | "memory" = "sqlite") {
+  const db = backend === "memory" ? new MemoryDatabase() : openDatabase(":memory:");
   const store = new RecordStore(db, { clock, authorize: (auth) => auth === AUTH });
   const service = new Apply2InterviewService(store, { authorization: AUTH, fetchImpl: fakeFetch(pages) });
   return { db, store, service };

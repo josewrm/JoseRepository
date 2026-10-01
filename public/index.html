@@ -36,6 +36,7 @@
           <input name="languages" placeholder="Languages, comma separated">
           <label class="inline"><input type="checkbox" name="relocate"> Willing to relocate</label>
         </fieldset>
+        <button type="button" id="load-example" hidden>Fill in the example</button>
         <button type="submit" class="primary">Prepare the best honest application</button>
         <p class="hint">Policy: the agent may fetch a public JD, score, propose CV section edits and draft an email. It may not send email, submit an application, or overwrite your master CV.</p>
       </form>
@@ -51,7 +52,13 @@
       </section>
     </aside>
 
-    <main id="main" class="main">
+    <main id="main-col" class="main">
+      <p id="browser-note" class="card note" hidden>Browser edition. Your WorkSessions are stored in this browser only. Except for the bundled example, job pages can't be fetched from here, so the agent will ask you to paste the job description. Example data is marked as an example.</p>
+      <section id="viewer" class="card" hidden>
+        <div class="row" style="justify-content:space-between"><h2>File</h2><div class="row"><button data-copy>Copy</button><button data-close>Close</button></div></div>
+        <pre></pre>
+      </section>
+      <div id="main">
       <div class="empty card">
         <h2>How it works</h2>
         <ol>
@@ -60,6 +67,7 @@
           <li>Anything outside Policy becomes a Request: you approve, deny, narrow, answer, correct, or take over.</li>
           <li>Every step is a hash-chained Jarvis event with evidence. Export the pack when you finish.</li>
         </ol>
+      </div>
       </div>
     </main>
   </div>

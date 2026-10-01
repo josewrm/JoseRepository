@@ -77,6 +77,15 @@ const TEMPLATES: Record<string, Template> = {
   },
 };
 
+const TITLE_PLACEHOLDER: Record<string, string> = {
+  en: "[job title]",
+  es: "[puesto]",
+  de: "[Stellentitel]",
+  fr: "[intitulé du poste]",
+  pt: "[cargo]",
+  it: "[ruolo]",
+};
+
 const SCORE_WORDS = /\b(score|scoring|fit score|percentage|heuristic|apply_to_interview|match rate|puntuaci[oó]n|porcentaje|prozent|bewertung|pourcentage|pontua[çc][ãa]o|porcentagem|punteggio|percentuale)\b/i;
 
 export class EmailGuardError extends Error {}
@@ -84,7 +93,8 @@ export class EmailGuardError extends Error {}
 export function draftEmail(jd: StructuredJd, score: ScoreSheet | null, facts: CandidateFacts, cvHeaderName: string | null): EmailDraft {
   const language = TEMPLATES[jd.language] ? jd.language : "en";
   const t = TEMPLATES[language];
-  const title = jd.title ?? (language === "en" ? "the advertised role" : jd.title ?? "—");
+  // No title found in the posting: leave a visible placeholder for the human instead of guessing one.
+  const title = jd.title ?? TITLE_PLACEHOLDER[language];
   const highlights = score
     ? [...new Set(score.requirements.filter((r) => r.kind === "must" && r.status === "met").flatMap((r) => r.evidence_quotes))]
         .filter((q) => !q.startsWith("Candidate facts:"))

@@ -3,6 +3,7 @@
 
 const TOKEN = document.querySelector('meta[name="host-auth"]').content;
 const main = document.getElementById("main");
+const BROWSER = window.A2I_BROWSER ?? null;
 let current = null;
 let tab = "overview";
 
@@ -50,7 +51,7 @@ async function loadSessions() {
   const list = document.getElementById("sessions");
   list.innerHTML = sessions.length
     ? sessions.map((s) => `<li data-id="${esc(s.id)}" class="${current?.work_session.id === s.id ? "active" : ""}">
-        <div class="title">${esc(s.title ?? "Untitled job")} <span class="pill ${esc(s.status)}">${esc(s.status)}</span></div>
+        <div class="title">${esc(s.title ?? "Untitled job")}${BROWSER && s.job_url === BROWSER.exampleUrl ? ' <span class="hint">(example)</span>' : ""} <span class="pill ${esc(s.status)}">${esc(s.status)}</span></div>
         <div class="sub">${esc(s.job_url)}</div></li>`).join("")
     : '<li class="sub">No WorkSessions yet.</li>';
   list.querySelectorAll("li[data-id]").forEach((li) => li.addEventListener("click", () => open(li.dataset.id)));
@@ -133,7 +134,7 @@ function renderRequest(r) {
   const v = current;
   let controls = "";
   if (action === "use_human_supplied_jd") {
-    controls = `<textarea id="jd-text-${r.id}" rows="8" placeholder="Paste the job description exactly as you see it"></textarea>
+    controls = `${BROWSER ? '<p class="hint">This browser edition can only read the bundled example page. Open the job link in another tab, copy the whole description, and paste it here.</p>' : ""}<textarea id="jd-text-${r.id}" rows="8" placeholder="Paste the job description exactly as you see it"></textarea>
       <div class="row"><button data-review="${r.id}" data-decision="answer">Answer with this JD</button>
       <button data-review="${r.id}" data-decision="deny" class="danger">Stop</button></div>`;
   } else if (action === "accept_cv_version") {
@@ -231,7 +232,7 @@ function renderTab() {
     const mailto = h ? `mailto:${encodeURIComponent(h.to ?? "")}?subject=${encodeURIComponent(h.subject)}&body=${encodeURIComponent(h.body)}` : null;
     return `<p class="hint">Language ${esc(d.language)} · ${h ? "approved for you to send" : "draft only, not approved"}${v.email_sent ? " · you marked it sent" : ""}</p>
       <table><tr><th>To</th><td>${esc(d.to ?? "—")}</td></tr><tr><th>Subject</th><td>${esc(d.subject)}</td></tr></table><pre>${esc(d.body)}</pre>
-      ${h ? `<div class="row"><a href="${mailto}">Open in my mail app</a>${!v.email_sent ? '<button data-act="email-sent">I sent it</button>' : ""}</div>` : ""}`;
+      ${h ? `<div class="row"><button data-copy-email>Copy email</button><a href="${mailto}">Open in my mail app</a>${!v.email_sent ? '<button data-act="email-sent">I sent it</button>' : ""}</div>` : ""}`;
   }
   if (tab === "timeline") {
     return `<ul class="timeline">${v.events.map((e) => `<li><span class="seq">${e.sequence}</span>
@@ -257,13 +258,32 @@ function renderOutcome() {
     ${reports.length ? `<ul>${reports.map((r) => `<li>${esc(r.received_at)} · <span class="pill">${esc(r.outcome)}</span> ${esc(r.reason)}</li>`).join("")}</ul>` : ""}</section>`;
 }
 
+// The browser edition cannot save files; it shows the content with a Copy button instead.
+function showText(name, text) {
+  const viewer = document.getElementById("viewer");
+  viewer.querySelector("h2").textContent = name;
+  viewer.querySelector("pre").textContent = text;
+  viewer.hidden = false;
+  viewer.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied");
+  } catch {
+    toast("Copy is blocked here. Select the text and copy it manually.");
+  }
+}
+
 function bindDownloads(scope) {
   scope.querySelectorAll("[data-download]").forEach((a) => a.addEventListener("click", async (event) => {
     event.preventDefault();
     const response = await fetch(a.dataset.download, { headers: { Authorization: `HostAuth ${TOKEN}` } });
     if (!response.ok) return toast((await response.json()).error);
-    const blob = await response.blob();
     const name = (response.headers.get("content-disposition") ?? "").match(/filename="([^"]+)"/)?.[1] ?? "download";
+    if (BROWSER) return showText(name, await response.text());
+    const blob = await response.blob();
     const link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: name });
     link.click();
   }));
@@ -274,6 +294,10 @@ function bind() {
   main.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
   main.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => { document.getElementById(`edit-${b.dataset.edit}`).hidden = false; }));
   bindDownloads(main);
+  main.querySelectorAll("[data-copy-email]").forEach((b) => b.addEventListener("click", () => {
+    const h = current.artifacts.email_handoff;
+    copyText(`To: ${h.to ?? ""}\nSubject: ${h.subject}\n\n${h.body}`, b);
+  }));
   main.querySelectorAll("[data-review]").forEach((b) => b.addEventListener("click", () => busy(b, async () => {
     const rid = b.dataset.review;
     const decision = b.dataset.decision;
@@ -291,13 +315,17 @@ function bind() {
   })));
   main.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => busy(b, async () => {
     const act = b.dataset.act;
-    if (act === "cancel" && !confirm("Cancel this WorkSession? Pending Requests close and nothing proceeds.")) return;
+    if (act === "cancel" && b.dataset.armed !== "1") {
+      b.dataset.armed = "1";
+      b.textContent = "Click again to cancel the WorkSession";
+      return;
+    }
     if (act === "export") {
       const result = await api("POST", `/api/sessions/${id}/export`);
       tab = "evidence";
       render();
-      document.getElementById("export-result").innerHTML = `<h3>Export</h3><p>${result.files.length} files written to <span class="mono">${esc(result.dir)}</span>.
-        Jarvis CLI: <b>${result.jarvis_cli.passed}/${result.jarvis_cli.total}</b> checks passed.</p>
+      document.getElementById("export-result").innerHTML = `<h3>Export</h3><p>${result.files.length} files in the pack (${esc(result.dir)}).
+        ${esc(result.validator ?? "Jarvis CLI")}: <b>${result.jarvis_cli.passed}/${result.jarvis_cli.total}</b> checks passed.</p>
         ${result.jarvis_cli.failures.length ? `<pre>${esc(result.jarvis_cli.failures.map((f) => `${f.command} ${f.file}\n${f.output}`).join("\n"))}</pre>` : ""}
         <a href="#" data-download="/api/sessions/${id}/export.json">Download pack as one JSON file</a>`;
       bindDownloads(document.getElementById("export-result"));
@@ -315,4 +343,28 @@ function bind() {
   })));
 }
 
-loadSessions().catch((error) => toast(error.message));
+document.querySelector("#viewer [data-close]").addEventListener("click", () => { document.getElementById("viewer").hidden = true; });
+document.querySelector("#viewer [data-copy]").addEventListener("click", (e) => copyText(document.querySelector("#viewer pre").textContent, e.target));
+
+if (BROWSER) {
+  document.getElementById("browser-note").hidden = false;
+  const example = document.getElementById("load-example");
+  example.hidden = false;
+  example.addEventListener("click", () => {
+    const form = document.getElementById("new-session");
+    form.job_url.value = BROWSER.exampleUrl;
+    form.master_cv.value = BROWSER.exampleCv;
+    form.name.value = BROWSER.exampleFacts.name;
+    form.location.value = BROWSER.exampleFacts.location;
+    form.visa.value = BROWSER.exampleFacts.visa;
+    form.languages.value = BROWSER.exampleFacts.languages.join(", ");
+  });
+}
+
+loadSessions()
+  .then(async () => {
+    // Open the most recent WorkSession so the page starts in a working state.
+    const first = document.querySelector("#sessions li[data-id]");
+    if (first && !current) await open(first.dataset.id);
+  })
+  .catch((error) => toast(error.message));

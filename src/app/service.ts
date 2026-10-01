@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+const randomUUID = () => globalThis.crypto.randomUUID();
 import type { RecordStore } from "../store/record-store.ts";
 import {
   GENESIS_HASH,

@@ -37,6 +37,14 @@ Environment variables: `PORT`, `HOST` (default `127.0.0.1`), `A2I_DB`
 (SQLite path, default `data/apply2interview.sqlite`), and `A2I_HOST_TOKEN`
 (otherwise a random token is generated per run).
 
+## Browser edition
+
+`npm run build:artifact` builds `dist/apply2interview.html`, one self-contained page
+running the same host code in the browser. It keeps an in-memory store saved to
+localStorage, validates the export pack in-process with the Jarvis SDK, and has a
+bundled example job page. Without a server it cannot fetch other job pages, so the
+agent opens a Request and you paste the job description.
+
 ## Layout
 
 ```txt
@@ -48,7 +56,8 @@ src/adapt/      section adapter + truth guard
 src/email/      email drafter (posting language, no scores)
 src/app/        the WorkSession loop (AgentWorker + HumanWorker actions)
 src/export/     evidence pack export (same layout as ../jarvis/docs/examples/evidence-packs)
-src/server/     HTTP API + static UI host
+src/server/     transport-free API routes + Node HTTP server
+src/browser/    browser edition entry (in-page API, localStorage, sha256 shim)
 public/         minimal UI
 test/           golden honesty tests, store rules, end-to-end slice
 ```

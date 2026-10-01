@@ -142,3 +142,10 @@ test("login walls and empty pages are failures, never a JD", () => {
   const empty = snapshotFromHtml("<html><body><p>Loading…</p></body></html>", meta);
   assert.equal(!empty.ok && empty.reason, "empty");
 });
+
+test("email without a JD title uses a visible placeholder, not an invented title", () => {
+  const { jd, score } = pipeline();
+  const draft = draftEmail({ ...jd, title: null }, score, FACTS, "Alex Example");
+  assert.match(draft.subject, /\[job title\]/);
+  assert.doesNotMatch(draft.body, /the the/);
+});
