@@ -7,28 +7,24 @@
   <title>Apply2Interview</title>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Share+Tech+Mono&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-word">apply2interview</span><span class="brand-badge">■ Jarvis v0.1 host</span></div>
+    <nav class="menu" id="menu" aria-label="Menú">
+      <button data-page="mapa" class="on">Grafo</button>
+      <button data-page="inicio">Nueva</button>
+      <button data-page="oferta">Oferta</button>
+      <button data-page="cvs">CVs</button>
+      <button data-page="evaluacion">Evaluación</button>
+      <button data-page="envio">Envío</button>
+      <button data-page="jarvis">Jarvis</button>
+    </nav>
+  </header>
   <div class="shell">
     <aside class="side" id="side">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <div>
-          <div class="brand-name">Apply2Interview</div>
-          <div class="brand-sub">host · protocolo Jarvis v0.1</div>
-        </div>
-      </div>
-      <nav class="menu" id="menu" aria-label="Menú">
-        <button data-page="mapa" class="on"><span class="k">00</span>Mapa</button>
-        <button data-page="inicio"><span class="k">01</span>Nueva postulación</button>
-        <button data-page="oferta"><span class="k">02</span>Oferta completa</button>
-        <button data-page="cvs"><span class="k">03</span>CVs adaptados</button>
-        <button data-page="evaluacion"><span class="k">04</span>Evaluación</button>
-        <button data-page="envio"><span class="k">05</span>Formulario y envío</button>
-        <button data-page="jarvis"><span class="k">06</span>Jarvis WorkSession</button>
-      </nav>
       <div class="side-block">
         <div class="eyebrow">Postulaciones</div>
         <ul id="sessions" class="sessions"></ul>
@@ -50,6 +46,7 @@
     </main>
   </div>
   <div id="toast" class="toast" hidden role="status"></div>
+  <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

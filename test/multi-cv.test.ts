@@ -93,3 +93,18 @@ test("a pasted job description needs no fetch", async () => {
   assert.equal(view.artifacts.jd.source.extraction, "human_supplied");
   assert.ok(view.evaluation);
 });
+
+test("knowledge graph: communities, EXTRACTED vs INFERRED edges, keyword-to-CV-line links", async () => {
+  const { service } = makeService(pages);
+  const wsId = await service.startSession({ job_url: URL, source_cvs: SOURCES, candidate_facts: FACTS });
+  const graph = service.view(wsId).graph;
+  const ids = new Set(graph.nodes.map((n: any) => n.id));
+  assert.ok(graph.nodes.length > 80, `graph has ${graph.nodes.length} nodes`);
+  assert.ok(graph.edges.every((e: any) => ids.has(e.from) && ids.has(e.to)), "no dangling edges");
+  for (const c of ["oferta", "keywords", "cv:General", "cv:EWM", "cv:English", "evaluacion", "jarvis", "envio"]) {
+    assert.ok(graph.communities.some((x: any) => x.id === c), c);
+  }
+  assert.ok(graph.edges.some((e: any) => e.from === "kw:PPF" && e.relation === "found_in" && e.confidence === "EXTRACTED"));
+  assert.ok(graph.edges.some((e: any) => e.relation === "evidenced_by" && e.confidence === "INFERRED"));
+  assert.ok(graph.stats.extracted_pct > 50);
+});

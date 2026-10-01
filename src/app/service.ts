@@ -17,6 +17,7 @@ import { detectLanguage } from "../adapters/html.ts";
 import { scoreFit, type CandidateFacts, type ScoreSheet } from "../scoring/score.ts";
 import { applyPatch, buildCvPatch, type CvPatch } from "../adapt/section-adapter.ts";
 import { cvFilename, fillApplicationForm, normalizeSources, type SourceCvInput } from "./application-package.ts";
+import { buildKnowledgeGraph } from "./knowledge-graph.ts";
 import { TruthGuardError, checkTruth } from "../adapt/truth-guard.ts";
 import { assertNoScore, draftEmail, nameFromCvHeader, type EmailDraft } from "../email/drafter.ts";
 import {
@@ -1315,6 +1316,21 @@ export class Apply2InterviewService {
       source_scores: artifact(state.source_scores_ref),
       email_receipt: artifact(state.email_receipt_ref),
       form: this.form(wsId),
+      graph: buildKnowledgeGraph({
+        jd: artifact(state.jd_ref),
+        sources: this.sources(wsId).map((s) => ({ label: s.label, cv: s.cv })),
+        scoreSheet: artifact(state.score_ref),
+        evaluation: artifact(state.evaluation_ref),
+        events: this.store.listEvents(wsId),
+        policyDecisions: this.store.listRecords(wsId, "PolicyDecision"),
+        requests: this.store.listRecords(wsId, "Request"),
+        reviews: this.store.listRecords(wsId, "Review"),
+        evidence: this.store.listRecords(wsId, "EvidenceItemRef"),
+        form: this.form(wsId),
+        emailDraft: artifact(state.email_ref),
+        emailSent: Boolean(state.email_sent),
+        memoryProposals: this.store.listRecords(wsId, "MemoryProposal"),
+      }),
       learning_proposed: Boolean(state.learning_proposed),
       limitations: state.limitations ?? [],
     };

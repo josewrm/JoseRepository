@@ -5,3 +5,4 @@ outcome-reports/
 *.sqlite
 *.sqlite-journal
 dist/
+graphify-out/cache/

@@ -24,17 +24,19 @@ const bundle = result.outputFiles[0].text;
 const index = read("public/index.html");
 const body = index
   .slice(index.indexOf("<body>") + "<body>".length, index.indexOf("</body>"))
-  .replace(/<script[^>]*src="\/app\.js"[^>]*><\/script>/, "");
+  .replace(/<script[^>]*src="\/app\.js"[^>]*><\/script>/, "")
+  .replace(/<script[^>]*vis-network[^>]*><\/script>/, "");
 // Keep </script> sequences inside inline code from closing the tag early.
 const inline = (code: string) => code.replace(/<\/script/gi, "<\\/script");
 
 const page = `<title>Apply2Interview</title>
 <meta name="host-auth" content="browser-local">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 ${read("public/styles.css")}
 </style>
 ${body.trim()}
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
 <script>
 ${inline(bundle)}
 </script>
