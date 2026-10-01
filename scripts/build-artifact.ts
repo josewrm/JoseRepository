@@ -22,16 +22,17 @@ const result = await build({
 const bundle = result.outputFiles[0].text;
 
 const index = read("public/index.html");
+const bodyOpen = /<body[^>]*>/.exec(index)!;
 const body = index
-  .slice(index.indexOf("<body>") + "<body>".length, index.indexOf("</body>"))
+  .slice(bodyOpen.index + bodyOpen[0].length, index.indexOf("</body>"))
   .replace(/<script[^>]*src="\/app\.js"[^>]*><\/script>/, "")
   .replace(/<script[^>]*vis-network[^>]*><\/script>/, "");
 // Keep </script> sequences inside inline code from closing the tag early.
 const inline = (code: string) => code.replace(/<\/script/gi, "<\\/script");
 
-const page = `<title>Apply2Interview</title>
+const page = `<title>Jarvis Empleo</title>
 <meta name="host-auth" content="browser-local">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 ${read("public/styles.css")}
 </style>

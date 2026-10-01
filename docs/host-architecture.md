@@ -227,3 +227,12 @@ modify it.
   ApprovalScope (`max_uses: 1`). The Node host sends through SMTP when `A2I_SMTP_URL`
   and `A2I_SMTP_FROM` are set and records an `email_sent_receipt`; otherwise, and in
   the browser edition, it hands the approved draft to the human.
+
+## Personal assistant, job search, and batch Easy Apply
+
+- **Profile** (host-private table `profile`): the three source CVs, candidate facts, default search. Not a protocol record.
+- **Job search** (`src/adapters/job-search.ts`): LinkedIn's public `jobs-guest` endpoints, parsed with the card/detail parsers vendored from [MadsLorentzen/ai-job-search](https://github.com/MadsLorentzen/ai-job-search) (MIT, `vendor/ai-job-search/`). One page per search, no login, no cookies. Results are host-private `job_leads`, ranked by overlap with terms in the candidate's own CVs.
+- **LinkedIn job links**: `fetchJobPage` reads the public guest detail page for a `linkedin.com/jobs/view/<id>` link. A stub or missing description is a `login_wall` failure, so the agent opens a `use_human_supplied_jd` Request; it never invents a JD.
+- **Prepare all**: one WorkSession per lead (`startSession` with the profile's CVs), so each job gets the full loop: JD, three adapted CVs, evaluation, form, draft.
+- **Enviar todos · Easy Apply**: one human tap records **one approve Review per pending `accept_cv_version` Request**. It then lists each job link for the human to open. The human presses Easy Apply on LinkedIn and taps "Ya lo envié", which records a human `submission` Contribution (`markSubmittedExternally`). The host never submits on LinkedIn or an ATS: it's against LinkedIn's terms, risks the account, and is a hard ban for this host.
+- **Voice or tap**: `src/app/commands.ts` parses Spanish, Portuguese and English commands such as "busca SAP EWM en Madrid", "prepara todos", "aprobar todos", "estado", and "abre empleos". The UI uses the Web Speech API when the browser allows the mic, and the text box and buttons otherwise.

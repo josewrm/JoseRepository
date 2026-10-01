@@ -9,6 +9,14 @@ import { HUMAN_ACTOR_ID } from "../app/participants.ts";
 import { buildEvidencePack } from "../export/evidence-pack.ts";
 import { validatePackFiles } from "../export/validate-pack.ts";
 import { handleApi, type RouteDeps } from "../server/routes.ts";
+import { HostStore } from "../store/host-store.ts";
+import { Assistant } from "../app/assistant.ts";
+import { DETAIL_URL, parseJobCards } from "../../vendor/ai-job-search/linkedin-search/helpers.ts";
+import exampleSearchHtml from "../../test/fixtures/linkedin/search.html";
+import exampleDetail1 from "../../test/fixtures/linkedin/detail-4100000001.html";
+import exampleDetail2 from "../../test/fixtures/linkedin/detail-4100000002.html";
+import exampleDetail3 from "../../test/fixtures/linkedin/detail-4100000003.html";
+import exampleDetail4 from "../../test/fixtures/linkedin/detail-4100000004.html";
 // Bundled as text by the build (esbuild text loader).
 import exampleJdHtml from "../../test/fixtures/ejemplo/oferta-ewm.html";
 import cvGeneral from "../../test/fixtures/ejemplo/cv-general-es.md";
@@ -53,11 +61,21 @@ const save = () => {
   }
 };
 
-/** The example job page is bundled; any other link needs a server this edition does not have. */
+/** Fictional example postings, shaped like LinkedIn's public guest pages. */
+const EXAMPLE_DETAILS: Record<string, string> = {
+  [`${DETAIL_URL}/4100000001`]: exampleDetail1,
+  [`${DETAIL_URL}/4100000002`]: exampleDetail2,
+  [`${DETAIL_URL}/4100000003`]: exampleDetail3,
+  [`${DETAIL_URL}/4100000004`]: exampleDetail4,
+};
+const EXAMPLE_LEADS = parseJobCards(exampleSearchHtml);
+
+/** The example job pages are bundled; any other link needs a server this edition does not have. */
 const fetchImpl = (async (input: string | URL | Request) => {
   const url = String(input);
-  if (url === EXAMPLE_URL) {
-    const response = new Response(exampleJdHtml, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  const page = url === EXAMPLE_URL ? exampleJdHtml : EXAMPLE_DETAILS[url];
+  if (page) {
+    const response = new Response(page, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
     Object.defineProperty(response, "url", { value: url });
     return response;
   }
@@ -66,9 +84,11 @@ const fetchImpl = (async (input: string | URL | Request) => {
 
 const store = new RecordStore(db, { authorize: (auth) => auth === AUTH });
 const service = new Apply2InterviewService(store, { authorization: AUTH, fetchImpl });
+const assistant = new Assistant(new HostStore(db), service, { fetchImpl, exampleLeads: EXAMPLE_LEADS });
 
 const deps: RouteDeps = {
   service,
+  assistant,
   exportPack: (wsId) => {
     const pack = buildEvidencePack(store, wsId, HUMAN_ACTOR_ID);
     return { location: "this browser", files: pack.files, manifest: pack.manifest, checks: validatePackFiles(pack.files), validator: "Jarvis SDK validators" };
@@ -77,6 +97,12 @@ const deps: RouteDeps = {
 
 async function seed(): Promise<void> {
   service.ensureParticipants();
+  if (!assistant.profile().sources.length) {
+    // Example profile and example jobs so the assistant opens with something to show.
+    assistant.saveProfile({ source_cvs: EXAMPLE_SOURCES, candidate_facts: EXAMPLE_FACTS, search: { query: "SAP EWM", location: "España" } });
+    await assistant.search({});
+    save();
+  }
   if (store.listWorkSessions().length) return;
   // First visit: one example WorkSession so the page opens in a working state.
   await service.startSession({ job_url: EXAMPLE_URL, source_cvs: EXAMPLE_SOURCES, candidate_facts: EXAMPLE_FACTS });

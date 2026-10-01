@@ -4,17 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="host-auth" content="__HOST_AUTH_TOKEN__">
-  <title>Apply2Interview</title>
+  <title>Jarvis Empleo</title>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="wide">
   <header class="topbar">
-    <div class="brand"><span class="brand-word">apply2interview</span><span class="brand-badge">■ Jarvis v0.1 host</span></div>
+    <div class="brand"><span class="brand-ring" aria-hidden="true"></span><span class="brand-word">JARVIS</span><span class="brand-badge">asistente personal · apply2interview</span></div>
     <nav class="menu" id="menu" aria-label="Menú">
-      <button data-page="mapa" class="on">Grafo</button>
+      <button data-page="empleos">Empleos</button>
+      <button data-page="asistente" class="on">Asistente</button>
+      <button data-page="perfil">Perfil</button>
+      <span class="menu-sep" aria-hidden="true"></span>
+      <button data-page="mapa">Grafo</button>
       <button data-page="inicio">Nueva</button>
       <button data-page="oferta">Oferta</button>
       <button data-page="cvs">CVs</button>
@@ -44,6 +48,13 @@
       </section>
       <div id="main"></div>
     </main>
+  </div>
+  <div class="dock" id="dock">
+    <form id="cmd" class="cmd" autocomplete="off">
+      <input id="cmd-text" placeholder="Di o escribe: «busca SAP EWM en Madrid»" aria-label="Orden para Jarvis">
+    </form>
+    <button id="mic" class="mic" type="button" aria-label="Hablar con Jarvis" title="Toca y habla"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg></button>
+    <button id="voice-out" class="btn ghost small-btn" type="button" aria-pressed="true" title="Respuestas habladas">🔊</button>
   </div>
   <div id="toast" class="toast" hidden role="status"></div>
   <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>

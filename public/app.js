@@ -5,7 +5,7 @@ const TOKEN = document.querySelector('meta[name="host-auth"]').content;
 const BROWSER = window.A2I_BROWSER ?? null;
 const main = document.getElementById("main");
 let current = null;
-let page = "mapa";
+let page = "asistente";
 let cvTab = null;
 let jarvisTab = "timeline";
 
@@ -104,7 +104,8 @@ document.getElementById("menu").addEventListener("click", (event) => {
   const button = event.target.closest("button[data-page]");
   if (!button) return;
   page = button.dataset.page;
-  render();
+  if (["asistente", "empleos", "perfil"].includes(page)) Promise.all([loadJobs(), loadProfile()]).then(render, (error) => toast(error.message));
+  else render();
 });
 
 // ------------------------------------------------------------------ helpers
@@ -140,14 +141,22 @@ function render() {
   renderStatus();
   network?.destroy();
   network = null;
-  const pages = { mapa: pageMapa, inicio: pageInicio, oferta: pageOferta, cvs: pageCvs, evaluacion: pageEvaluacion, envio: pageEnvio, jarvis: pageJarvis };
-  if (page !== "inicio" && page !== "mapa" && !current) {
+  const pages = { asistente: pageAsistente, empleos: pageEmpleos, perfil: pagePerfil, mapa: pageMapa, inicio: pageInicio, oferta: pageOferta, cvs: pageCvs, evaluacion: pageEvaluacion, envio: pageEnvio, jarvis: pageJarvis };
+  const own = ["asistente", "empleos", "perfil"].includes(page);
+  document.body.classList.toggle("wide", own);
+  document.getElementById("status").style.display = own ? "none" : "";
+  if (BROWSER) document.getElementById("browser-note").hidden = own;
+  if (!own && page !== "inicio" && page !== "mapa" && !current) {
     main.innerHTML = `<section class="panel"><h2>Elige o crea una postulación</h2><p class="muted">Empieza en Inicio con un enlace de oferta y hasta tres CVs.</p></section>`;
     return;
   }
+  if (page !== "empleos") selectedLead = null;
   main.innerHTML = pages[page]();
   bind();
+  bindAssistant();
   if (page === "mapa") startMap();
+  if (page === "empleos") startJobsGraph();
+  if (page === "asistente") { renderChat(); startOrb(); }
 }
 
 // ------------------------------------------------------------------ graph map (graphify style)
@@ -510,6 +519,402 @@ function requestCard(r) {
 
 // ------------------------------------------------------------------ events
 
+// ------------------------------------------------------------------ personal assistant (orb HUD)
+
+let jobs = { leads: [], summary: null };
+let profileData = null;
+let chat = [{ who: "j", text: "Hola. Dime qué empleo buscar, por ejemplo «busca SAP EWM en Madrid». Toca el micrófono o escribe." }];
+let listening = false;
+let speaking = false;
+let voiceOut = true;
+let armedEasy = false;
+let orbLoop = null;
+let selectedLead = null;
+const LEAD_STATUS = { found: "encontrado", needs_jd: "falta la oferta", prepared: "preparado", approved: "aprobado", submitted: "enviado por ti", failed: "falló" };
+const STATUS_COLOR = { found: "#4fb3ff", needs_jd: "#ffc76b", prepared: "#9fe6ff", approved: "#6fffc8", submitted: "#ffffff", failed: "#ff6d5e" };
+
+async function loadJobs() {
+  jobs = await api("GET", "/api/jobs");
+  return jobs;
+}
+async function loadProfile() {
+  profileData = await api("GET", "/api/profile");
+  return profileData;
+}
+
+function say(text) {
+  chat.push({ who: "j", text });
+  chat = chat.slice(-30);
+  if (voiceOut && "speechSynthesis" in window) {
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "es-ES";
+      u.onstart = () => (speaking = true);
+      u.onend = () => (speaking = false);
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch { /* no speech output here */ }
+  }
+}
+
+async function runCommand(text) {
+  if (!String(text).trim()) return;
+  chat.push({ who: "u", text });
+  renderChat();
+  try {
+    const r = await api("POST", "/api/assistant/command", { text });
+    jobs = { leads: r.leads, summary: r.summary };
+    say(r.reply);
+    if (r.intent.kind === "show_jobs" || r.intent.kind === "open") page = r.page;
+  } catch (error) {
+    say(error.message);
+  }
+  render();
+}
+
+function statusHeadline(s) {
+  if (!s || !s.has_profile) return { warn: true, t: "Configura tu perfil", d: "Guarda tus tres CVs y tus datos para que pueda adaptarlos." };
+  const attention = s.needs_jd + s.failed;
+  if (attention) return { warn: true, t: `${attention} empleo${attention > 1 ? "s" : ""} necesita${attention > 1 ? "n" : ""} tu atención`, d: "Falta la descripción completa: abre la postulación y pégala. No invento ofertas." };
+  if (!s.total) return { warn: false, t: "Sin empleos todavía", d: "Pídeme una búsqueda por voz o con el botón Buscar." };
+  return { warn: false, t: "Sin desvíos relevantes", d: `${s.total} empleos · ${s.prepared} preparados · ${s.approved} aprobados · ${s.submitted} enviados${s.best_pct != null ? ` · mejor ${s.best_pct}%` : ""}` };
+}
+
+function queueHtml() {
+  const list = jobs.leads.filter((l) => l.status === "approved" || l.status === "submitted");
+  if (!list.length) return '<p class="fineprint">Aún no hay CVs aprobados. Primero «preparar todos»; luego un toque aprueba cada CV adaptado.</p>';
+  return `<ul class="queue">${list.map((l) => `<li>
+      <span class="t" title="${esc(l.title)}">${esc(l.title)}</span><span class="pill ${esc(l.status)}">${esc(LEAD_STATUS[l.status])}</span>
+      <span class="s">${esc(l.company ?? "")}${l.pct != null ? ` · ${l.pct}%` : ""}
+        ${l.example ? '<span class="muted">ejemplo, no es oferta real</span>' : `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">Abrir Easy Apply ↗</a>`}
+        ${l.status === "approved" ? `<button class="btn ghost small-btn" data-submitted="${esc(l.id)}">Ya lo envié</button>` : ""}
+        ${l.ws_id ? `<button class="btn ghost small-btn" data-open-ws="${esc(l.ws_id)}">CV y formulario</button>` : ""}</span></li>`).join("")}</ul>`;
+}
+
+function easyButton() {
+  const s = jobs.summary;
+  const n = jobs.leads.filter((l) => l.status === "found" || l.status === "prepared").length;
+  return `<button class="easy" data-easy ${n ? "" : "disabled"}>${armedEasy ? `Toca otra vez: aprobar ${n} CV${n === 1 ? "" : "s"}` : "Enviar todos · Easy Apply"}</button>
+    <p class="fineprint">Un toque prepara lo que falte y aprueba cada CV adaptado (una Review tuya por empleo). LinkedIn no permite que una app envíe por ti: abro cada oferta y tú pulsas «Solicitud sencilla».${s?.approved ? "" : ""}</p>`;
+}
+
+function pageAsistente() {
+  const s = jobs.summary;
+  const h = statusHeadline(s);
+  const terms = profileData?.terms ?? [];
+  return `<section class="asst">
+    <div class="col left">
+      <div class="hpanel"><div class="hp-h">Señal <small id="sig-state">en espera</small></div><canvas class="wave" data-wave="0"></canvas><canvas class="wave" data-wave="1"></canvas></div>
+      <div class="hpanel"><div class="hp-h">Métricas <small>heuristic_v1</small></div>
+        <div class="kv"><div><b>${s?.total ?? 0}</b><span>encontrados</span></div><div><b>${s?.prepared ?? 0}</b><span>preparados</span></div>
+        <div><b>${s?.approved ?? 0}</b><span>aprobados</span></div><div><b>${s?.submitted ?? 0}</b><span>enviados</span></div>
+        <div><b>${s?.best_pct != null ? `${s.best_pct}%` : "—"}</b><span>mejor</span></div><div><b>${s?.avg_pct != null ? `${s.avg_pct}%` : "—"}</b><span>media</span></div></div></div>
+      <div class="hpanel"><div class="hp-h">Perfil <small>${profileData?.profile.sources.length ?? 0}/3 CVs</small></div>
+        <div class="terms">${terms.slice(0, 18).map((t) => `<span>${esc(t)}</span>`).join("") || '<span>sin CVs</span>'}</div>
+        <button class="hbtn" style="margin-top:10px" data-goto="perfil">Editar perfil</button></div>
+    </div>
+    <div class="center">
+      <div class="orb"><canvas id="orb"></canvas><div class="state" id="orb-state">${listening ? "escuchando" : "jarvis"}</div></div>
+      <div class="statuscard"><div class="k">Estado del sistema</div><div class="t ${h.warn ? "warn" : ""}">${esc(h.t)}</div><div class="d">${esc(h.d)}</div>
+        <div class="row"><button class="hbtn" data-say="buscar">Buscar</button><button class="hbtn" data-say="prepara todos">Preparar todos</button><button class="hbtn" data-goto="empleos">Ver grafo</button><button class="hbtn" data-say="estado">Estado</button></div></div>
+    </div>
+    <div class="col right">
+      <div class="hpanel"><div class="hp-h">Conversación <small>tú / jarvis</small></div><div class="chat" id="chat"></div></div>
+      <div class="hpanel"><div class="hp-h">Easy Apply <small>LinkedIn</small></div>${easyButton()}<div style="margin-top:10px">${queueHtml()}</div></div>
+    </div>
+  </section>`;
+}
+
+function renderChat() {
+  const box = document.getElementById("chat");
+  if (!box) return;
+  box.innerHTML = chat.map((m) => `<div class="msg ${m.who}"><span class="who">${m.who === "u" ? "TÚ" : "JARVIS"}</span><p>${esc(m.text)}</p></div>`).join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+// Orb: tangled glowing rings, each a circle rotated in 3D and projected.
+function startOrb() {
+  cancelAnimationFrame(orbLoop);
+  const rings = Array.from({ length: 16 }, (_, i) => ({ ax: Math.random() * Math.PI, ay: Math.random() * Math.PI, sx: (Math.random() - 0.5) * 0.5, sy: (Math.random() - 0.5) * 0.4, r: 0.68 + Math.random() * 0.26, hue: 196 + Math.random() * 22, w: 0.6 + Math.random() * 1.4 }));
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  let energy = 0.2;
+  const frame = (ms) => {
+    const orb = document.getElementById("orb");
+    if (!orb || page !== "asistente") return;
+    const t = ms / 1000;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = orb.clientWidth, hgt = orb.clientHeight;
+    if (orb.width !== Math.round(w * dpr)) { orb.width = Math.round(w * dpr); orb.height = Math.round(hgt * dpr); }
+    const ctx = orb.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hgt);
+    const target = listening ? 1 : speaking ? 0.75 : 0.2;
+    energy += (target - energy) * 0.06;
+    const cx = w / 2, cy = hgt / 2, R = Math.min(w, hgt) * 0.36;
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.25);
+    core.addColorStop(0, `rgba(170,225,255,${0.30 + energy * 0.25})`);
+    core.addColorStop(0.35, "rgba(40,130,255,0.16)");
+    core.addColorStop(1, "rgba(0,20,60,0)");
+    ctx.fillStyle = core;
+    ctx.fillRect(0, 0, w, hgt);
+    ctx.globalCompositeOperation = "lighter";
+    for (const ring of rings) {
+      const ax = ring.ax + (reduce ? 0 : t * ring.sx);
+      const ay = ring.ay + (reduce ? 0 : t * ring.sy);
+      ctx.beginPath();
+      for (let k = 0; k <= 96; k++) {
+        const a = (k / 96) * Math.PI * 2;
+        const wob = 1 + energy * 0.06 * Math.sin(a * 5 + t * 6 + ring.hue);
+        let x = Math.cos(a) * ring.r * wob, y = Math.sin(a) * ring.r * wob, z = 0;
+        let y2 = y * Math.cos(ax) - z * Math.sin(ax); z = y * Math.sin(ax) + z * Math.cos(ax); y = y2;
+        let x2 = x * Math.cos(ay) + z * Math.sin(ay); z = -x * Math.sin(ay) + z * Math.cos(ay); x = x2;
+        const p = 2.6 / (2.6 + z);
+        const px = cx + x * R * p, py = cy + y * R * p;
+        k ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.strokeStyle = `hsla(${ring.hue},100%,${62 + energy * 14}%,${0.32 + energy * 0.3})`;
+      ctx.lineWidth = ring.w;
+      ctx.shadowColor = "rgba(79,179,255,0.9)";
+      ctx.shadowBlur = 10 + energy * 14;
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = "source-over";
+    document.querySelectorAll("canvas[data-wave]").forEach((c, i) => {
+      const cw = c.clientWidth, ch = c.clientHeight;
+      if (c.width !== Math.round(cw * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+      const g = c.getContext("2d");
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, cw, ch);
+      g.strokeStyle = i ? "rgba(111,211,255,0.55)" : "rgba(159,230,255,0.95)";
+      g.lineWidth = 1.4;
+      g.shadowColor = "rgba(79,179,255,0.8)";
+      g.shadowBlur = 6;
+      g.beginPath();
+      for (let x = 0; x <= cw; x += 2) {
+        const amp = ch * (0.08 + energy * 0.32) * (i ? 0.7 : 1);
+        const y = ch / 2 + Math.sin(x * 0.045 + t * (3 + i)) * amp * Math.sin(x * 0.011 + t) + Math.sin(x * 0.13 - t * 5) * amp * 0.25;
+        x ? g.lineTo(x, y) : g.moveTo(x, y);
+      }
+      g.stroke();
+    });
+    const st = document.getElementById("sig-state");
+    if (st) st.textContent = listening ? "escuchando" : speaking ? "hablando" : "en espera";
+    orbLoop = requestAnimationFrame(frame);
+  };
+  orbLoop = requestAnimationFrame(frame);
+}
+
+// ------------------------------------------------------------------ jobs graph
+
+function pageEmpleos() {
+  const s = jobs.summary;
+  const p = profileData?.profile.search ?? {};
+  return `<section class="jobs">
+    <div class="graph-wrap">
+      <div id="jobs-graph" class="graph" aria-label="Grafo de empleos encontrados"></div>
+      <div class="overlay hint">clic: detalles · doble clic: abrir postulación</div>
+      <div class="overlay explain" id="lead-explain" ${selectedLead ? "" : "hidden"}></div>
+    </div>
+    <div class="right">
+      <div class="hpanel"><div class="hp-h">Buscar en LinkedIn <small>ai-job-search</small></div>
+        <form id="job-search" class="searchbar"><input name="query" placeholder="SAP EWM" value="${esc(p.query ?? "")}" aria-label="Qué buscar"><input name="location" placeholder="España" value="${esc(p.location ?? "")}" aria-label="Dónde"><button class="hbtn" type="submit">Buscar</button></form>
+        ${BROWSER ? '<p class="fineprint">Sin servidor no hay búsqueda en vivo: verás empleos de ejemplo (ficticios).</p>' : ""}</div>
+      <div class="hpanel"><div class="hp-h">Empleos <small>${s?.total ?? 0}</small></div>
+        <div class="kv"><div><b>${s?.found ?? 0}</b><span>nuevos</span></div><div><b>${s?.prepared ?? 0}</b><span>preparados</span></div><div><b>${s?.approved ?? 0}</b><span>aprobados</span></div><div><b>${s?.best_pct != null ? `${s.best_pct}%` : "—"}</b><span>mejor</span></div></div>
+        <div class="row" style="margin-top:10px"><button class="hbtn" data-say="prepara todos" ${s?.found ? "" : "disabled"}>Preparar todos</button></div></div>
+      <div class="hpanel"><div class="hp-h">Easy Apply <small>un toque</small></div>${easyButton()}<div style="margin-top:10px">${queueHtml()}</div></div>
+      <div class="hpanel"><div class="hp-h">Leyenda</div><div class="terms">${Object.entries(LEAD_STATUS).map(([k, v]) => `<span><i class="dot" style="background:${STATUS_COLOR[k]}"></i>${esc(v)}</span>`).join("")}</div></div>
+    </div>
+  </section>`;
+}
+
+function leadExplain(id) {
+  const l = jobs.leads.find((x) => x.id === id);
+  if (!l) return "";
+  return `<div class="row between"><div class="card-h">${esc(l.title)}</div><button class="btn ghost" data-close-lead>×</button></div>
+    <p class="card-p">${esc(l.company ?? "")} · ${esc(l.location ?? "")}${l.date ? ` · ${esc(l.date)}` : ""}</p>
+    <p class="mono">Estado: <span class="pill ${esc(l.status)}">${esc(LEAD_STATUS[l.status])}</span> · relevancia ${l.relevance}${l.pct != null ? ` · apply_to_interview ${l.pct}% (${esc(l.best_label ?? "")})` : ""}</p>
+    <p class="mono">Coincide con tus CVs: ${esc(l.matched_terms.join(", ") || "—")}</p>
+    ${l.note ? `<p class="card-p">${esc(l.note)}</p>` : ""}
+    <div class="row" style="margin-top:8px">
+      ${l.ws_id ? `<button class="btn" data-open-ws="${esc(l.ws_id)}">Abrir postulación</button>` : `<button class="btn" data-prepare-one="${esc(l.id)}">Preparar este</button>`}
+      ${l.example ? "" : `<a class="btn ghost" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">LinkedIn ↗</a>`}
+    </div>`;
+}
+
+function startJobsGraph() {
+  const box = document.getElementById("jobs-graph");
+  if (!box) return;
+  if (!window.vis?.Network) {
+    box.innerHTML = `<p class="card-p" style="padding:20px">No se pudo cargar la librería del grafo (vis-network).</p>`;
+    return;
+  }
+  const leads = jobs.leads;
+  const name = profileData?.profile.facts?.name ?? "Tú";
+  const termSet = [...new Set(leads.flatMap((l) => l.matched_terms))];
+  const nodes = [
+    { id: "me", label: name, shape: "dot", value: 40, color: { background: "#dff3ff", border: "#6fd3ff" }, font: { size: 15, color: "#ffffff" }, title: "Tu perfil: 3 CVs y tus datos" },
+    ...termSet.map((t) => ({ id: `term:${t}`, label: t, value: 6, color: { background: "#0a3a78", border: "#4fb3ff" }, title: `Término de tus CVs: ${t}` })),
+    ...leads.map((l) => ({ id: `job:${l.id}`, label: `${l.title.slice(0, 34)}${l.pct != null ? `\n${l.pct}%` : ""}`, value: 10 + (l.pct ?? l.relevance / 2) / 3, color: { background: STATUS_COLOR[l.status], border: "#9fe6ff", highlight: { background: "#ffffff", border: "#ffffff" } }, title: `${l.title} — ${l.company ?? ""}` })),
+  ];
+  const edges = [
+    ...leads.map((l) => ({ from: "me", to: `job:${l.id}`, width: 0.5 + l.relevance / 40, dashes: l.status === "found" })),
+    ...leads.flatMap((l) => l.matched_terms.map((t) => ({ from: `job:${l.id}`, to: `term:${t}`, width: 0.5, color: { color: "rgba(79,179,255,0.25)" } }))),
+  ];
+  network = new window.vis.Network(box, { nodes: new window.vis.DataSet(nodes), edges: new window.vis.DataSet(edges) }, {
+    nodes: { shape: "dot", scaling: { min: 5, max: 34 }, borderWidth: 1.5, shadow: { enabled: true, color: "rgba(79,179,255,0.8)", size: 16, x: 0, y: 0 }, font: { color: "#dff3ff", size: 12, face: "Rajdhani, JetBrains Mono, sans-serif", strokeWidth: 3, strokeColor: "#031026", multi: false } },
+    edges: { color: { color: "rgba(111,211,255,0.4)", highlight: "#ffffff" }, smooth: false },
+    physics: { solver: "forceAtlas2Based", forceAtlas2Based: { gravitationalConstant: -60, centralGravity: 0.01, springLength: 110, avoidOverlap: 0.4 }, stabilization: { iterations: 220 } },
+    interaction: { hover: true, tooltipDelay: 120 },
+  });
+  network.once("stabilizationIterationsDone", () => network.fit({ animation: { duration: 500 } }));
+  const showLead = (id) => {
+    const panel = document.getElementById("lead-explain");
+    selectedLead = id;
+    if (!id) return (panel.hidden = true);
+    panel.innerHTML = leadExplain(id);
+    panel.hidden = false;
+    bindAssistant(panel);
+    panel.querySelector("[data-close-lead]")?.addEventListener("click", () => { selectedLead = null; panel.hidden = true; });
+  };
+  network.on("click", (p) => showLead(String(p.nodes[0] ?? "").startsWith("job:") ? p.nodes[0].slice(4) : null));
+  network.on("doubleClick", (p) => {
+    const l = leads.find((x) => `job:${x.id}` === p.nodes[0]);
+    if (l?.ws_id) openSession(l.ws_id, "mapa");
+  });
+  if (selectedLead) showLead(selectedLead);
+}
+
+// ------------------------------------------------------------------ profile
+
+function pagePerfil() {
+  const p = profileData?.profile ?? { sources: [], facts: {}, search: {} };
+  const f = p.facts ?? {};
+  const slot = (n) => `<fieldset><legend>CV ${n}</legend>
+    <input name="cv${n}_label" placeholder="Nombre de esta versión" value="${esc(p.sources[n - 1]?.label ?? "")}" aria-label="Nombre del CV ${n}">
+    <textarea name="cv${n}_text" rows="9" placeholder="Pega aquí el CV (texto o Markdown)" aria-label="Texto del CV ${n}">${esc(p.sources[n - 1]?.text ?? "")}</textarea>
+    <input type="file" data-cv-file="${n}" accept=".txt,.md,text/plain,text/markdown" aria-label="Cargar CV ${n}"></fieldset>`;
+  return `<form id="profile-form" class="panel stack">
+    <div class="row between"><h2>Tu perfil</h2><span class="muted small">Los CVs adaptados solo usan líneas de estos tres CVs.</span></div>
+    <div class="grid3">${slot(1)}${slot(2)}${slot(3)}</div>
+    <fieldset><legend>Tus datos (se usan tal cual)</legend><div class="grid3">
+      ${["name:Nombre completo", "email:Email", "phone:Teléfono", "location:Ubicación", "visa:Permiso de trabajo", "linkedin:LinkedIn", "availability:Disponibilidad"].map((x) => { const [k, l] = x.split(":"); return `<input name="${k}" placeholder="${l}" aria-label="${l}" value="${esc(f[k] ?? "")}">`; }).join("")}
+      <input name="languages" placeholder="Idiomas, separados por comas" aria-label="Idiomas" value="${esc((f.languages ?? []).join(", "))}">
+    </div></fieldset>
+    <fieldset><legend>Búsqueda por defecto</legend><div class="grid3">
+      <input name="query" placeholder="SAP EWM" aria-label="Qué buscar" value="${esc(p.search?.query ?? "")}">
+      <input name="loc" placeholder="España" aria-label="Dónde" value="${esc(p.search?.location ?? "")}">
+      <select name="remote" aria-label="Modalidad"><option value="">Cualquier modalidad</option>${["remote:Remoto", "hybrid:Híbrido", "onsite:Presencial"].map((x) => { const [k, l] = x.split(":"); return `<option value="${k}" ${p.search?.remote === k ? "selected" : ""}>${l}</option>`; }).join("")}</select>
+    </div></fieldset>
+    <div class="row between"><p class="muted small">Se guarda en este ${BROWSER ? "navegador" : "equipo"}. Nunca se envía nada sin tu toque.</p><button class="btn primary" type="submit">Guardar perfil</button></div>
+  </form>`;
+}
+
+function bindAssistant(scope = main) {
+  scope.querySelectorAll("[data-say]").forEach((b) => b.addEventListener("click", () => {
+    const text = b.dataset.say === "buscar" ? `busca ${profileData?.profile.search?.query || "SAP"}${profileData?.profile.search?.location ? ` en ${profileData.profile.search.location}` : ""}` : b.dataset.say;
+    busy(() => runCommand(text));
+  }));
+  scope.querySelectorAll("[data-open-ws]").forEach((b) => b.addEventListener("click", () => openSession(b.dataset.openWs, "mapa")));
+  scope.querySelectorAll("[data-submitted]").forEach((b) => b.addEventListener("click", () => busy(async () => {
+    const r = await api("POST", `/api/jobs/${b.dataset.submitted}/submitted`);
+    await loadJobs();
+    say(`Anotado: enviaste «${r.lead.title}». Queda en el registro Jarvis como envío tuyo.`);
+    render();
+  })));
+  scope.querySelectorAll("[data-prepare-one]").forEach((b) => b.addEventListener("click", () => busy(async () => {
+    const r = await api("POST", "/api/jobs/prepare", { ids: [b.dataset.prepareOne] });
+    jobs = { leads: r.leads, summary: r.summary };
+    render();
+  })));
+  scope.querySelectorAll("[data-easy]").forEach((b) => b.addEventListener("click", () => {
+    if (!armedEasy) { armedEasy = true; render(); return; }
+    armedEasy = false;
+    busy(async () => {
+      chat.push({ who: "u", text: "Enviar todos · Easy Apply" });
+      if (jobs.leads.some((l) => l.status === "found")) {
+        const r = await api("POST", "/api/jobs/prepare", {});
+        jobs = { leads: r.leads, summary: r.summary };
+      }
+      const r = await api("POST", "/api/jobs/approve-all", {});
+      jobs = { leads: r.leads, summary: r.summary };
+      const real = r.to_open.filter((o) => !jobs.leads.find((l) => l.id === o.id)?.example);
+      say(r.to_open.length ? `Aprobados ${r.to_open.length} CVs adaptados. ${real.length ? "Abre cada oferta en la lista y pulsa Solicitud sencilla; luego toca «Ya lo envié»." : "Son ejemplos ficticios: no hay oferta real que abrir."}` : "No había nada preparado para aprobar.");
+      render();
+    });
+  }));
+  const search = scope.querySelector("#job-search");
+  if (search) search.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = search.query.value.trim();
+    if (!q) return toast("Escribe qué buscar.");
+    busy(() => runCommand(`busca ${q}${search.location.value.trim() ? ` en ${search.location.value.trim()}` : ""}`));
+  });
+  const pf = scope.querySelector("#profile-form");
+  if (pf) pf.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = new FormData(pf);
+    const sources = [1, 2, 3].map((n) => ({ label: f.get(`cv${n}_label`), text: f.get(`cv${n}_text`) })).filter((x) => String(x.text).trim());
+    const facts = Object.fromEntries(["name", "email", "phone", "location", "visa", "linkedin", "availability"].map((k) => [k, f.get(k)]));
+    facts.languages = String(f.get("languages") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    busy(async () => {
+      profileData = await api("POST", "/api/profile", { source_cvs: sources, candidate_facts: facts, search: { query: f.get("query"), location: f.get("loc"), remote: f.get("remote") || undefined } });
+      toast(`Perfil guardado: ${profileData.profile.sources.length} CVs.`);
+      page = "asistente";
+      render();
+    });
+  });
+}
+
+// voice: Web Speech API where the browser allows it; typing and tapping always work.
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizer = null;
+document.getElementById("mic").addEventListener("click", () => {
+  const input = document.getElementById("cmd-text");
+  if (listening) { recognizer?.stop(); return; }
+  if (!Recognition) {
+    toast("Este navegador no permite reconocimiento de voz aquí. Escribe la orden o usa los botones.");
+    input.focus();
+    return;
+  }
+  recognizer = new Recognition();
+  recognizer.lang = "es-ES";
+  recognizer.interimResults = true;
+  recognizer.maxAlternatives = 1;
+  recognizer.onresult = (event) => {
+    const res = event.results[event.results.length - 1];
+    input.value = res[0].transcript;
+    if (res.isFinal) { input.value = ""; runCommand(res[0].transcript); }
+  };
+  recognizer.onerror = (event) => {
+    toast(event.error === "not-allowed" || event.error === "service-not-allowed" ? "El micrófono está bloqueado en esta vista. Abre la versión local (npm start) en Chrome o escribe la orden." : `Voz: ${event.error}`);
+  };
+  recognizer.onend = () => { listening = false; document.getElementById("mic").classList.remove("on"); const st = document.getElementById("orb-state"); if (st) st.textContent = "jarvis"; };
+  try {
+    recognizer.start();
+    listening = true;
+    document.getElementById("mic").classList.add("on");
+    const st = document.getElementById("orb-state");
+    if (st) st.textContent = "escuchando";
+  } catch (error) {
+    toast(`Voz no disponible: ${error.message}`);
+  }
+});
+document.getElementById("cmd").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = document.getElementById("cmd-text");
+  const text = input.value;
+  input.value = "";
+  busy(() => runCommand(text));
+});
+document.getElementById("voice-out").addEventListener("click", (e) => {
+  voiceOut = !voiceOut;
+  e.currentTarget.setAttribute("aria-pressed", String(voiceOut));
+  e.currentTarget.textContent = voiceOut ? "🔊" : "🔈";
+  if (!voiceOut) window.speechSynthesis?.cancel();
+});
+
 function bind() {
   const id = current?.work_session.id;
   main.querySelectorAll("[data-goto]").forEach((d) => {
@@ -600,10 +1005,14 @@ document.querySelector("#viewer [data-close]").addEventListener("click", () => {
 document.querySelector("#viewer [data-copy]").addEventListener("click", () => copyText(document.querySelector("#viewer pre").textContent));
 if (BROWSER) document.getElementById("browser-note").hidden = false;
 
-render();
-loadSidebar()
+Promise.all([loadJobs(), loadProfile()])
+  .then(() => render())
+  .then(() => loadSidebar())
   .then(async () => {
     const first = document.querySelector("#sessions li[data-id]");
-    if (first && !current) await openSession(first.dataset.id, "mapa");
+    if (first && !current) {
+      current = await api("GET", `/api/sessions/${first.dataset.id}`);
+      loadSidebar();
+    }
   })
   .catch((error) => toast(error.message));
