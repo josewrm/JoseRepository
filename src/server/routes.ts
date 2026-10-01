@@ -63,6 +63,15 @@ export function errorResponse(error: unknown): ApiResponse {
 
 type Handler = (m: RegExpMatchArray, body: any) => Promise<ApiResponse | unknown> | ApiResponse | unknown;
 
+function base64Bytes(b64: string): Uint8Array {
+  if (!b64) throw new UserError("Falta el archivo.");
+  if (b64.length > 20_000_000) throw new UserError("Archivo demasiado grande (máx. 15 MB).", 413);
+  const bin = atob(b64.replace(/^data:[^,]*,/, ""));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 export async function handleApi(deps: RouteDeps, req: ApiRequest): Promise<ApiResponse> {
   const { service } = deps;
   const assistant = () => {
@@ -131,6 +140,12 @@ export async function handleApi(deps: RouteDeps, req: ApiRequest): Promise<ApiRe
     ["POST", /^\/api\/profile$/, (_m, body) => ({ profile: assistant().saveProfile(body), terms: assistant().profileTerms() })],
     ["GET", /^\/api\/jobs$/, () => ({ leads: assistant().leads(), summary: assistant().summary() })],
     ["POST", /^\/api\/jobs\/search$/, async (_m, body) => ({ leads: await assistant().search(body), summary: assistant().summary() })],
+    ["POST", /^\/api\/jobs\/import-docx$/, async (_m, body) => {
+      const bytes = base64Bytes(String(body.data_base64 ?? ""));
+      const result = await assistant().importDocx(bytes, String(body.filename ?? "vacantes.docx").slice(0, 120));
+      return { ...result, leads: assistant().leads(), summary: assistant().summary() };
+    }],
+    ["POST", /^\/api\/profile\/cv-docx$/, async (_m, body) => ({ text: await assistant().cvFromDocx(base64Bytes(String(body.data_base64 ?? ""))) })],
     ["POST", /^\/api\/jobs\/prepare$/, async (_m, body) => ({ leads: await assistant().prepare(ids(body)), summary: assistant().summary() })],
     ["POST", /^\/api\/jobs\/approve-all$/, async (_m, body) => ({ ...(await assistant().approveAll(ids(body))), summary: assistant().summary() })],
     ["POST", /^\/api\/jobs\/([\w-]+)\/submitted$/, (m) => ({ lead: assistant().markSubmitted(m[1]), summary: assistant().summary() })],

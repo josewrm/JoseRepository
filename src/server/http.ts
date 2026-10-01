@@ -39,7 +39,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 2_000_000) throw new HttpError(413, { error: "Body too large (2 MB max)." });
+    if (size > 20_000_000) throw new HttpError(413, { error: "Body too large (20 MB max)." });
     chunks.push(chunk as Buffer);
   }
   if (!chunks.length) return {};

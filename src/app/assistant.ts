@@ -5,6 +5,8 @@ import { normalizeSources, type SourceCvInput } from "./application-package.ts";
 import { Apply2InterviewService, UserError, normalizeFacts } from "./service.ts";
 import type { CandidateFacts } from "../scoring/score.ts";
 import { parseCommand, type Intent } from "./commands.ts";
+import { docxText, readDocx } from "../adapters/docx.ts";
+import { vacanciesFromDocx } from "./vacancy-import.ts";
 
 /**
  * Personal assistant layer: the candidate profile, jobs found, and batch
@@ -32,9 +34,13 @@ export interface JobLead extends JobCard {
   best_label?: string | null;
   note?: string;
   example?: boolean;
+  /** Full job description from the candidate's own document (imported .docx). */
+  jd_text?: string | null;
+  source?: "linkedin_search" | "docx";
+  doc_label?: string | null;
 }
 
-const MAX_BATCH = 15;
+const MAX_BATCH = 40;
 
 export class Assistant {
   hosts: HostStore;
@@ -144,7 +150,13 @@ export class Assistant {
     const targets = this.pick(ids, (l) => !l.ws_id).slice(0, MAX_BATCH);
     for (const lead of targets) {
       try {
-        const wsId = await this.service.startSession({ job_url: lead.url, source_cvs: profile.sources, candidate_facts: profile.facts as Record<string, unknown> });
+        // A JD from the candidate's own document is used as given; otherwise the public page is read.
+        const wsId = await this.service.startSession({
+          job_url: lead.url || undefined,
+          jd_text: lead.jd_text ?? null,
+          source_cvs: profile.sources,
+          candidate_facts: profile.facts as Record<string, unknown>,
+        });
         this.hosts.saveLead({ ...lead, ws_id: wsId });
       } catch (error) {
         this.hosts.saveLead({ ...lead, status: "failed", note: (error as Error).message.slice(0, 200) });
@@ -168,10 +180,58 @@ export class Assistant {
     return { leads, to_open: approved.map((l) => ({ id: l.id, title: l.title, url: l.url })) };
   }
 
+  /**
+   * Vacancies from a .docx: a list of job links and/or full job descriptions.
+   * Importing the links file and then the JD file merges both by job id.
+   */
+  async importDocx(bytes: Uint8Array, filename = "vacantes.docx"): Promise<{ added: number; updated: number; with_jd: number; total: number }> {
+    const vacancies = vacanciesFromDocx(await readDocx(bytes));
+    if (!vacancies.length) throw new UserError(`No encontré vacantes ni enlaces de empleo en ${filename}.`, 422);
+    const terms = this.profileTerms();
+    const now = new Date().toISOString();
+    let added = 0;
+    let updated = 0;
+    for (const v of vacancies) {
+      const existing = this.hosts.getLead<JobLead>(v.key);
+      const title = v.title.startsWith("Oferta LinkedIn") && existing?.title ? existing.title : v.title;
+      const text = `${title} ${v.company ?? ""} ${v.jd_text ?? ""}`;
+      const matched = terms.filter((t) => findTerms({ [t]: ALL_TERMS[t] ?? DOMAIN_TERMS[t] ?? [t] }, text).length);
+      const lead: JobLead = {
+        id: v.key,
+        title,
+        company: v.company ?? existing?.company ?? null,
+        companyUrl: existing?.companyUrl ?? null,
+        location: v.location ?? existing?.location ?? null,
+        date: existing?.date ?? null,
+        url: v.url || existing?.url || "",
+        found_at: existing?.found_at ?? now,
+        query: filename,
+        relevance: Math.min(100, matched.length * 12),
+        matched_terms: matched,
+        status: existing?.status ?? "found",
+        ...(existing?.ws_id ? { ws_id: existing.ws_id, pct: existing.pct, best_label: existing.best_label } : {}),
+        jd_text: v.jd_text ?? existing?.jd_text ?? null,
+        source: "docx",
+        doc_label: v.label ?? existing?.doc_label ?? null,
+        ...(v.jd_text || existing?.jd_text ? {} : { note: "Sin descripción en el documento: se leerá la página pública de la oferta." }),
+      };
+      existing ? updated++ : added++;
+      this.hosts.saveLead(lead);
+    }
+    return { added, updated, with_jd: vacancies.filter((v) => v.jd_text).length, total: vacancies.length };
+  }
+
+  /** CV text from a .docx (for the profile). */
+  async cvFromDocx(bytes: Uint8Array): Promise<string> {
+    const text = docxText(await readDocx(bytes));
+    if (text.length < 200) throw new UserError("El .docx no parece un CV (muy poco texto).", 422);
+    return text;
+  }
+
   markSubmitted(id: string): JobLead {
     const lead = this.hosts.getLead<JobLead>(id);
     if (!lead?.ws_id) throw new UserError("Ese empleo no está preparado.", 404);
-    this.service.markSubmittedExternally(lead.ws_id, new URL(lead.url).hostname);
+    this.service.markSubmittedExternally(lead.ws_id, lead.url ? new URL(lead.url).hostname : "fuera de la app (sin enlace)");
     return this.refresh(lead);
   }
 

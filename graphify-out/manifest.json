@@ -6,9 +6,9 @@
     "semantic_hash": ""
   },
   "public/app.js": {
-    "mtime": 1790896397.6957786,
-    "seen": 1790896439.0656345,
-    "ast_hash": "5d6a0f7dfdb041faf1cfbcabdaf549d7",
+    "mtime": 1790898330.4978106,
+    "seen": 1790898394.119522,
+    "ast_hash": "af2c1263e95379971647fdb511488dc9",
     "semantic_hash": ""
   },
   "saudo2.py": {
@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "scripts/build-artifact.ts": {
-    "mtime": 1790896158.20263,
-    "seen": 1790896439.0656385,
-    "ast_hash": "02479798685b4dc6f18da99a7f01294a",
+    "mtime": 1790898152.233873,
+    "seen": 1790898394.119525,
+    "ast_hash": "6e42c3732806f314a48a33d43c6b3f34",
     "semantic_hash": ""
   },
   "scripts/validate-export.ts": {
@@ -84,9 +84,9 @@
     "semantic_hash": ""
   },
   "src/browser/main.ts": {
-    "mtime": 1790896139.2450793,
-    "seen": 1790896439.0656571,
-    "ast_hash": "a41f5592b9a407708bb4048c26407cec",
+    "mtime": 1790898330.496741,
+    "seen": 1790898394.119545,
+    "ast_hash": "4412ff69105af8a4f19907cbd22ba027",
     "semantic_hash": ""
   },
   "src/email/drafter.ts": {
@@ -132,9 +132,9 @@
     "semantic_hash": ""
   },
   "src/scoring/jd.ts": {
-    "mtime": 1790885194.3791723,
-    "seen": 1790894421.7412133,
-    "ast_hash": "cb06b655fa30856427abb7e25ed2e06b",
+    "mtime": 1790898018.7563283,
+    "seen": 1790898394.1195529,
+    "ast_hash": "dc73c014e0a00aae8fb5850a271ae577",
     "semantic_hash": ""
   },
   "src/scoring/lexicon.ts": {
@@ -150,15 +150,15 @@
     "semantic_hash": ""
   },
   "src/scoring/score.ts": {
-    "mtime": 1790893090.8614798,
-    "seen": 1790894421.7412155,
-    "ast_hash": "9d57731386853443e8d7984823723ead",
+    "mtime": 1790898091.2974994,
+    "seen": 1790898394.119556,
+    "ast_hash": "16e1a8d60fb260cf68f7cfd5c0054c4f",
     "semantic_hash": ""
   },
   "src/server/http.ts": {
-    "mtime": 1790895982.6840143,
-    "seen": 1790896439.0656688,
-    "ast_hash": "4942e4545387f5f6cd8c5f28358b3d57",
+    "mtime": 1790897944.5853384,
+    "seen": 1790898394.1195567,
+    "ast_hash": "c9ebf6cab0870105763942f4f8a16654",
     "semantic_hash": ""
   },
   "src/server/mailer.ts": {
@@ -174,9 +174,9 @@
     "semantic_hash": ""
   },
   "src/server/routes.ts": {
-    "mtime": 1790895972.768804,
-    "seen": 1790896439.065672,
-    "ast_hash": "ed5acaea1166f22248697ee91f1c7abb",
+    "mtime": 1790897927.6575513,
+    "seen": 1790898394.1195595,
+    "ast_hash": "8d6fdaad4a422a9077998335cee31320",
     "semantic_hash": ""
   },
   "src/store/db.ts": {
@@ -258,15 +258,15 @@
     "semantic_hash": ""
   },
   "docs/host-architecture.md": {
-    "mtime": 1790896425.4257352,
-    "seen": 1790896439.0656986,
-    "ast_hash": "1b226cb069d809266f72a3c48604a7a1",
+    "mtime": 1790898391.7492633,
+    "seen": 1790898394.1195915,
+    "ast_hash": "41a271f09c0deb7d24c038a11d6f4a5b",
     "semantic_hash": ""
   },
   "public/index.html": {
-    "mtime": 1790896150.159568,
-    "seen": 1790896439.0656993,
-    "ast_hash": "9257a58a0502c823988e3f528a59490b",
+    "mtime": 1790898214.4945128,
+    "seen": 1790898394.1195922,
+    "ast_hash": "4b3ecefe10cb67aad1e1d5c101f19b3d",
     "semantic_hash": ""
   },
   "test/fixtures/ejemplo/cv-english.md": {
@@ -402,9 +402,9 @@
     "semantic_hash": ""
   },
   "src/app/assistant.ts": {
-    "mtime": 1790895987.6167169,
-    "seen": 1790896439.0656497,
-    "ast_hash": "53add28019e9799fd1be6c52601273ec",
+    "mtime": 1790897927.6571286,
+    "seen": 1790898394.119537,
+    "ast_hash": "06e52fc0d4044dc8df67cf086902a372",
     "semantic_hash": ""
   },
   "src/app/commands.ts": {
@@ -465,6 +465,24 @@
     "mtime": 1790895753.7901766,
     "seen": 1790896439.065711,
     "ast_hash": "f74943605e6f439b6edf985952c4cdd6",
+    "semantic_hash": ""
+  },
+  "src/adapters/docx.ts": {
+    "mtime": 1790897858.6612318,
+    "seen": 1790898394.1195302,
+    "ast_hash": "6ee182324f851edfb916c9dda222eb8c",
+    "semantic_hash": ""
+  },
+  "src/app/vacancy-import.ts": {
+    "mtime": 1790897908.1529639,
+    "seen": 1790898394.1195421,
+    "ast_hash": "36158a5c987b78c2dab372ec64e284f5",
+    "semantic_hash": ""
+  },
+  "test/docx-import.test.ts": {
+    "mtime": 1790898371.3850553,
+    "seen": 1790898394.119568,
+    "ast_hash": "dd451b96b74af3da45b60647df5c1ce4",
     "semantic_hash": ""
   }
 }

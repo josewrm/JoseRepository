@@ -533,6 +533,13 @@ let selectedLead = null;
 const LEAD_STATUS = { found: "encontrado", needs_jd: "falta la oferta", prepared: "preparado", approved: "aprobado", submitted: "enviado por ti", failed: "falló" };
 const STATUS_COLOR = { found: "#4fb3ff", needs_jd: "#ffc76b", prepared: "#9fe6ff", approved: "#6fffc8", submitted: "#ffffff", failed: "#ff6d5e" };
 
+async function fileBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
 async function loadJobs() {
   jobs = await api("GET", "/api/jobs");
   return jobs;
@@ -550,7 +557,7 @@ function say(text) {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "es-ES";
       u.onstart = () => (speaking = true);
-      u.onend = () => (speaking = false);
+      u.onend = () => { speaking = false; quietUntil = Date.now() + 700; };
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch { /* no speech output here */ }
@@ -582,13 +589,31 @@ function statusHeadline(s) {
 
 function queueHtml() {
   const list = jobs.leads.filter((l) => l.status === "approved" || l.status === "submitted");
-  if (!list.length) return '<p class="fineprint">Aún no hay CVs aprobados. Primero «preparar todos»; luego un toque aprueba cada CV adaptado.</p>';
-  return `<ul class="queue">${list.map((l) => `<li>
+  if (!list.length) return '<p class="fineprint">Aún no hay CVs aprobados. Importa tus vacantes (.docx) o busca; luego un toque prepara y aprueba todo.</p>';
+  const next = nextToOpen();
+  const left = list.filter((l) => l.status === "approved" && l.url && !l.example && !opened.has(l.id)).length;
+  const head = next
+    ? `<a class="easy next" href="${esc(next.url)}" target="_blank" rel="noopener noreferrer" data-open-next="${esc(next.id)}">Abrir siguiente (${left}) ↗</a>
+       <p class="fineprint">Abre «${esc(next.title)}»${next.company ? ` · ${esc(next.company)}` : ""}. En LinkedIn pulsa «Solicitud sencilla», adjunta el CV adaptado y vuelve aquí. El navegador solo deja abrir una pestaña por toque.</p>`
+    : `<p class="fineprint">${list.some((l) => l.status === "approved") ? "Todas las ofertas con enlace están abiertas. Marca «Ya lo envié» en las que enviaste." : "Todo enviado."}</p>`;
+  return `${head}<ul class="queue scroll">${list.map((l) => `<li class="${opened.has(l.id) ? "opened" : ""}">
       <span class="t" title="${esc(l.title)}">${esc(l.title)}</span><span class="pill ${esc(l.status)}">${esc(LEAD_STATUS[l.status])}</span>
       <span class="s">${esc(l.company ?? "")}${l.pct != null ? ` · ${l.pct}%` : ""}
-        ${l.example ? '<span class="muted">ejemplo, no es oferta real</span>' : `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">Abrir Easy Apply ↗</a>`}
+        ${l.example ? '<span class="muted">ejemplo, no es oferta real</span>' : l.url ? `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" data-opened="${esc(l.id)}">${opened.has(l.id) ? "Abierta ✓" : "Abrir Easy Apply"} ↗</a>` : '<span class="muted">sin enlace: envía por email o su web</span>'}
         ${l.status === "approved" ? `<button class="btn ghost small-btn" data-submitted="${esc(l.id)}">Ya lo envié</button>` : ""}
         ${l.ws_id ? `<button class="btn ghost small-btn" data-open-ws="${esc(l.ws_id)}">CV y formulario</button>` : ""}</span></li>`).join("")}</ul>`;
+}
+
+let opened = new Set();
+try { opened = new Set(JSON.parse(localStorage.getItem("jarvis.opened") ?? "[]")); } catch { /* per-viewer convenience only */ }
+const markOpened = (id) => { opened.add(id); try { localStorage.setItem("jarvis.opened", JSON.stringify([...opened])); } catch { /* ignore */ } };
+
+function importButton() {
+  return `<label class="hbtn file-btn">Importar vacantes .docx<input type="file" data-import-docx accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden></label>`;
+}
+
+function nextToOpen() {
+  return jobs.leads.find((l) => l.status === "approved" && l.url && !l.example && !opened.has(l.id)) ?? null;
 }
 
 function easyButton() {
@@ -616,11 +641,11 @@ function pageAsistente() {
     <div class="center">
       <div class="orb"><canvas id="orb"></canvas><div class="state" id="orb-state">${listening ? "escuchando" : "jarvis"}</div></div>
       <div class="statuscard"><div class="k">Estado del sistema</div><div class="t ${h.warn ? "warn" : ""}">${esc(h.t)}</div><div class="d">${esc(h.d)}</div>
-        <div class="row"><button class="hbtn" data-say="buscar">Buscar</button><button class="hbtn" data-say="prepara todos">Preparar todos</button><button class="hbtn" data-goto="empleos">Ver grafo</button><button class="hbtn" data-say="estado">Estado</button></div></div>
+        <div class="row"><button class="hbtn" data-say="buscar">Buscar</button><button class="hbtn" data-say="prepara todos">Preparar todos</button><button class="hbtn" data-goto="empleos">Ver grafo</button><button class="hbtn" data-say="estado">Estado</button>${importButton()}</div></div>
     </div>
     <div class="col right">
       <div class="hpanel"><div class="hp-h">Conversación <small>tú / jarvis</small></div><div class="chat" id="chat"></div></div>
-      <div class="hpanel"><div class="hp-h">Easy Apply <small>LinkedIn</small></div>${easyButton()}<div style="margin-top:10px">${queueHtml()}</div></div>
+      <div class="hpanel"><div class="hp-h">Easy Apply <small>LinkedIn</small></div><div class="row" style="margin-bottom:10px">${importButton()}</div>${easyButton()}<div style="margin-top:10px">${queueHtml()}</div></div>
     </div>
   </section>`;
 }
@@ -719,10 +744,12 @@ function pageEmpleos() {
     <div class="right">
       <div class="hpanel"><div class="hp-h">Buscar en LinkedIn <small>ai-job-search</small></div>
         <form id="job-search" class="searchbar"><input name="query" placeholder="SAP EWM" value="${esc(p.query ?? "")}" aria-label="Qué buscar"><input name="location" placeholder="España" value="${esc(p.location ?? "")}" aria-label="Dónde"><button class="hbtn" type="submit">Buscar</button></form>
-        ${BROWSER ? '<p class="fineprint">Sin servidor no hay búsqueda en vivo: verás empleos de ejemplo (ficticios).</p>' : ""}</div>
+        ${BROWSER ? `<p class="fineprint">Sin servidor no hay búsqueda en vivo${BROWSER.privateEdition ? ": importa tus vacantes en .docx." : ": verás empleos de ejemplo (ficticios)."}</p>` : ""}</div>
       <div class="hpanel"><div class="hp-h">Empleos <small>${s?.total ?? 0}</small></div>
         <div class="kv"><div><b>${s?.found ?? 0}</b><span>nuevos</span></div><div><b>${s?.prepared ?? 0}</b><span>preparados</span></div><div><b>${s?.approved ?? 0}</b><span>aprobados</span></div><div><b>${s?.best_pct != null ? `${s.best_pct}%` : "—"}</b><span>mejor</span></div></div>
         <div class="row" style="margin-top:10px"><button class="hbtn" data-say="prepara todos" ${s?.found ? "" : "disabled"}>Preparar todos</button></div></div>
+      <div class="hpanel"><div class="hp-h">Vacantes .docx <small>tabla + JDs</small></div><div class="row">${importButton()}</div>
+        <p class="fineprint">Acepta la tabla de enlaces y el documento de descripciones completas; se unen por oferta. Sin servidor no se leen páginas de LinkedIn: usa el .docx con las descripciones.</p></div>
       <div class="hpanel"><div class="hp-h">Easy Apply <small>un toque</small></div>${easyButton()}<div style="margin-top:10px">${queueHtml()}</div></div>
       <div class="hpanel"><div class="hp-h">Leyenda</div><div class="terms">${Object.entries(LEAD_STATUS).map(([k, v]) => `<span><i class="dot" style="background:${STATUS_COLOR[k]}"></i>${esc(v)}</span>`).join("")}</div></div>
     </div>
@@ -794,7 +821,7 @@ function pagePerfil() {
   const slot = (n) => `<fieldset><legend>CV ${n}</legend>
     <input name="cv${n}_label" placeholder="Nombre de esta versión" value="${esc(p.sources[n - 1]?.label ?? "")}" aria-label="Nombre del CV ${n}">
     <textarea name="cv${n}_text" rows="9" placeholder="Pega aquí el CV (texto o Markdown)" aria-label="Texto del CV ${n}">${esc(p.sources[n - 1]?.text ?? "")}</textarea>
-    <input type="file" data-cv-file="${n}" accept=".txt,.md,text/plain,text/markdown" aria-label="Cargar CV ${n}"></fieldset>`;
+    <input type="file" data-cv-file="${n}" accept=".docx,.txt,.md,text/plain,text/markdown" aria-label="Cargar CV ${n}"></fieldset>`;
   return `<form id="profile-form" class="panel stack">
     <div class="row between"><h2>Tu perfil</h2><span class="muted small">Los CVs adaptados solo usan líneas de estos tres CVs.</span></div>
     <div class="grid3">${slot(1)}${slot(2)}${slot(3)}</div>
@@ -828,19 +855,38 @@ function bindAssistant(scope = main) {
     jobs = { leads: r.leads, summary: r.summary };
     render();
   })));
+  scope.querySelectorAll("[data-import-docx]").forEach((input) => input.addEventListener("change", () => busy(async () => {
+    const files = [...input.files];
+    for (const file of files) {
+      chat.push({ who: "u", text: `Importar ${file.name}` });
+      const r = await api("POST", "/api/jobs/import-docx", { filename: file.name, data_base64: await fileBase64(file) });
+      jobs = { leads: r.leads, summary: r.summary };
+      say(`${file.name}: ${r.total} vacantes (${r.added} nuevas, ${r.updated} unidas), ${r.with_jd} con descripción completa.`);
+    }
+    const missing = jobs.leads.filter((l) => l.source === "docx" && !l.jd_text && !l.ws_id).length;
+    if (missing) say(`${missing} vacantes solo tienen enlace. ${BROWSER ? "Importa también el .docx con las descripciones completas: aquí no puedo leer LinkedIn." : "Leeré su página pública al preparar."}`);
+    render();
+  })));
+  scope.querySelectorAll("[data-open-next], [data-opened]").forEach((a) => a.addEventListener("click", () => {
+    markOpened(a.dataset.openNext ?? a.dataset.opened);
+    setTimeout(render, 50);
+  }));
   scope.querySelectorAll("[data-easy]").forEach((b) => b.addEventListener("click", () => {
     if (!armedEasy) { armedEasy = true; render(); return; }
     armedEasy = false;
     busy(async () => {
       chat.push({ who: "u", text: "Enviar todos · Easy Apply" });
-      if (jobs.leads.some((l) => l.status === "found")) {
+      const toPrepare = jobs.leads.filter((l) => l.status === "found").length;
+      if (toPrepare) {
+        toast(`Preparando ${toPrepare} vacantes: descripción, 3 CVs adaptados y evaluación…`);
         const r = await api("POST", "/api/jobs/prepare", {});
         jobs = { leads: r.leads, summary: r.summary };
       }
       const r = await api("POST", "/api/jobs/approve-all", {});
       jobs = { leads: r.leads, summary: r.summary };
       const real = r.to_open.filter((o) => !jobs.leads.find((l) => l.id === o.id)?.example);
-      say(r.to_open.length ? `Aprobados ${r.to_open.length} CVs adaptados. ${real.length ? "Abre cada oferta en la lista y pulsa Solicitud sencilla; luego toca «Ya lo envié»." : "Son ejemplos ficticios: no hay oferta real que abrir."}` : "No había nada preparado para aprobar.");
+      const pend = jobs.leads.filter((l) => l.status === "needs_jd").length;
+      say(r.to_open.length ? `Aprobados ${r.to_open.length} CVs adaptados. ${real.length ? "Toca «Abrir siguiente» para ir oferta por oferta y pulsa Solicitud sencilla; luego «Ya lo envié»." : "Son ejemplos ficticios: no hay oferta real que abrir."}${pend ? ` ${pend} siguen sin descripción.` : ""}` : "No había nada preparado para aprobar.");
       render();
     });
   }));
@@ -868,38 +914,76 @@ function bindAssistant(scope = main) {
 }
 
 // voice: Web Speech API where the browser allows it; typing and tapping always work.
+// One tap latches the mic on: it keeps listening (and restarts after pauses) until tapped again.
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognizer = null;
-document.getElementById("mic").addEventListener("click", () => {
+let micLatched = false;
+let quietUntil = 0;
+
+function micUi() {
+  const mic = document.getElementById("mic");
+  mic.classList.toggle("on", micLatched);
+  mic.setAttribute("aria-pressed", String(micLatched));
+  mic.title = micLatched ? "Escuchando: toca para parar" : "Toca para hablar (se queda escuchando)";
+  const st = document.getElementById("orb-state");
+  if (st) st.textContent = micLatched ? "escuchando" : "jarvis";
+}
+
+function startRecognizer() {
   const input = document.getElementById("cmd-text");
-  if (listening) { recognizer?.stop(); return; }
-  if (!Recognition) {
-    toast("Este navegador no permite reconocimiento de voz aquí. Escribe la orden o usa los botones.");
-    input.focus();
-    return;
-  }
   recognizer = new Recognition();
   recognizer.lang = "es-ES";
+  recognizer.continuous = true;
   recognizer.interimResults = true;
   recognizer.maxAlternatives = 1;
   recognizer.onresult = (event) => {
-    const res = event.results[event.results.length - 1];
-    input.value = res[0].transcript;
-    if (res.isFinal) { input.value = ""; runCommand(res[0].transcript); }
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      const said = res[0].transcript.trim();
+      // Ignore what Jarvis itself is saying through the speakers.
+      if (speaking || Date.now() < quietUntil) continue;
+      if (!res.isFinal) { input.value = said; continue; }
+      input.value = "";
+      if (said) busy(() => runCommand(said));
+    }
   };
   recognizer.onerror = (event) => {
-    toast(event.error === "not-allowed" || event.error === "service-not-allowed" ? "El micrófono está bloqueado en esta vista. Abre la versión local (npm start) en Chrome o escribe la orden." : `Voz: ${event.error}`);
+    if (["not-allowed", "service-not-allowed", "audio-capture"].includes(event.error)) {
+      micLatched = false;
+      micUi();
+      toast(event.error === "audio-capture" ? "No encuentro un micrófono." : "El micrófono está bloqueado en esta vista. Permite el micrófono o abre la versión local (npm start) en Chrome; mientras tanto escribe la orden.");
+    }
+    // no-speech / aborted / network: onend restarts while the mic is latched.
   };
-  recognizer.onend = () => { listening = false; document.getElementById("mic").classList.remove("on"); const st = document.getElementById("orb-state"); if (st) st.textContent = "jarvis"; };
+  recognizer.onend = () => {
+    listening = false;
+    if (micLatched) setTimeout(() => { if (micLatched) startRecognizer(); }, 250);
+    else micUi();
+  };
   try {
     recognizer.start();
     listening = true;
-    document.getElementById("mic").classList.add("on");
-    const st = document.getElementById("orb-state");
-    if (st) st.textContent = "escuchando";
   } catch (error) {
+    micLatched = false;
     toast(`Voz no disponible: ${error.message}`);
   }
+  micUi();
+}
+
+document.getElementById("mic").addEventListener("click", () => {
+  if (micLatched) {
+    micLatched = false;
+    recognizer?.stop();
+    micUi();
+    return;
+  }
+  if (!Recognition) {
+    toast("Este navegador no permite reconocimiento de voz aquí. Escribe la orden o usa los botones.");
+    document.getElementById("cmd-text").focus();
+    return;
+  }
+  micLatched = true;
+  startRecognizer();
 });
 document.getElementById("cmd").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -930,10 +1014,14 @@ function bind() {
     const h = current.artifacts.email_handoff;
     copyText(`Para: ${h.to ?? ""}\nAsunto: ${h.subject}\nAdjunto: ${h.attachment?.filename ?? ""}\n\n${h.body}`);
   }));
-  main.querySelectorAll("[data-cv-file]").forEach((input) => input.addEventListener("change", async () => {
+  main.querySelectorAll("[data-cv-file]").forEach((input) => input.addEventListener("change", () => busy(async () => {
     const file = input.files[0];
-    if (file) main.querySelector(`textarea[name="cv${input.dataset.cvFile}_text"]`).value = await file.text();
-  }));
+    if (!file) return;
+    const box = main.querySelector(`textarea[name="cv${input.dataset.cvFile}_text"]`);
+    box.value = /\.docx$/i.test(file.name) ? (await api("POST", "/api/profile/cv-docx", { data_base64: await fileBase64(file) })).text : await file.text();
+    const label = main.querySelector(`input[name="cv${input.dataset.cvFile}_label"]`);
+    if (label && !label.value) label.value = file.name.replace(/\.[^.]+$/, "").slice(0, 40);
+  })));
   const example = main.querySelector("#load-example");
   if (example) example.addEventListener("click", () => {
     const f = main.querySelector("#new-session");

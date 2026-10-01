@@ -236,3 +236,15 @@ modify it.
 - **Prepare all**: one WorkSession per lead (`startSession` with the profile's CVs), so each job gets the full loop: JD, three adapted CVs, evaluation, form, draft.
 - **Enviar todos · Easy Apply**: one human tap records **one approve Review per pending `accept_cv_version` Request**. It then lists each job link for the human to open. The human presses Easy Apply on LinkedIn and taps "Ya lo envié", which records a human `submission` Contribution (`markSubmittedExternally`). The host never submits on LinkedIn or an ATS: it's against LinkedIn's terms, risks the account, and is a hard ban for this host.
 - **Voice or tap**: `src/app/commands.ts` parses Spanish, Portuguese and English commands such as "busca SAP EWM en Madrid", "prepara todos", "aprobar todos", "estado", and "abre empleos". The UI uses the Web Speech API when the browser allows the mic, and the text box and buttons otherwise.
+
+## Vacancies from .docx (Table 23 flow)
+
+- `src/adapters/docx.ts` reads .docx with no dependencies. The zip is inflated with the platform `DecompressionStream`. It returns paragraphs (with Word bullets as "- "), tables, and links (hyperlink relationships, HYPERLINK fields, plain URLs).
+- `src/app/vacancy-import.ts` reads three shapes:
+  - a list of job links;
+  - numbered extracted-JD entries (`N. Company — Title`, `Location:`, `Link:`, then the full text);
+  - a Word table with title/company/link/description columns.
+- Links are normalised (LinkedIn tracking query dropped), so importing the link table and then the JD document merges them by job id.
+- A JD from the candidate's own document is a `human_supplied` snapshot: it is used verbatim and nothing is fetched. A vacancy with only a link is read from the public page on the server edition. In the browser edition it becomes a `use_human_supplied_jd` Request.
+- One tap prepares and approves everything (one Review per CV Request). "Abrir siguiente" then opens one job per tap, because browsers allow one new tab per gesture. The human submits on LinkedIn and taps "Ya lo envié".
+- Private data: `data/private-seed.json` (gitignored) holds the candidate's CV for `A2I_PRIVATE=1 npm run build:artifact`, which writes `dist/jarvis-private.html` for a private page only. The repository is public, so no candidate data is committed.

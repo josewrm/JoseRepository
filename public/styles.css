@@ -339,3 +339,24 @@ body.wide .side { display: none; }
 .searchbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .7fr) auto; gap: 6px; }
 @media (max-width: 500px) { .searchbar { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .mic.on { animation: none; } }
+
+/* Jarvis display font: Orbitron for the wordmark, panel headers and the status line */
+:root { --jarvis: "Orbitron", "Rajdhani", ui-sans-serif, system-ui, sans-serif; }
+.brand-word { font: 800 22px/1 var(--jarvis); letter-spacing: .38em; }
+.hp-h { font: 700 11.5px var(--jarvis); letter-spacing: .2em; }
+.statuscard .t { font: 700 20px/1.25 var(--jarvis); letter-spacing: .06em; }
+.statuscard .k, .orb .state { font-family: var(--jarvis); letter-spacing: .32em; }
+.kv b { font-family: var(--jarvis); font-size: 20px; }
+.easy { font-family: var(--jarvis); font-size: 13px; letter-spacing: .14em; }
+.msg .who { font-family: var(--jarvis); font-size: 9.5px; letter-spacing: .26em; }
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; color: var(--ink); }
+.file-btn:focus-within { outline: 2px solid var(--mint); outline-offset: 2px; }
+a.easy { display: block; text-align: center; text-decoration: none; }
+.easy.next { margin-bottom: 6px; }
+.queue.scroll { max-height: 340px; overflow: auto; padding-right: 4px; margin-top: 8px; }
+.queue li.opened { opacity: .72; border-color: rgb(111 255 200 / 35%); }
+.send { flex: none; }
+.mic[aria-pressed="true"]::after { content: ""; position: absolute; inset: -8px; border-radius: 50%; border: 2px solid rgb(159 230 255 / 70%); animation: ring 1.6s ease-out infinite; }
+.mic { position: relative; }
+@keyframes ring { from { transform: scale(.9); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mic[aria-pressed="true"]::after { animation: none; } }

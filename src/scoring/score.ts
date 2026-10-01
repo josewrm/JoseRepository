@@ -93,12 +93,28 @@ export function visaStatus(facts: CandidateFacts): "authorized" | "needs_sponsor
   return "unknown";
 }
 
+const OPTIONAL_CLAUSE = /(\bplus\b|bonus|advantage|asset|valorable|se valorar|von vorteil|wünschenswert|atout|nice to have|preferred|desirable|apprécié)/i;
+const ALTERNATIVE = /(\band\/or\b|\by\/o\b|\bund\/oder\b|\bet\/ou\b|\bor\b|\boder\b|\bou\b|\bo\b)/i;
+
 function languageMatch(requirement: Requirement, cv: ParsedCv, facts: CandidateFacts): { status: MatchStatus; basis: string; quotes: string[] } {
   const declared = (facts.languages ?? []).join(", ");
-  const results = requirement.languages.map((language) => {
+  const one = (language: string): MatchStatus => {
     if (declared && textHasTerm(LANGUAGE_NAMES, language, declared)) return "met";
     if (textHasTerm(LANGUAGE_NAMES, language, cv.text)) return "met";
     return declared ? "not_met" : "unknown";
+  };
+  // "English is crucial; Dutch, French and/or German is a plus": only English is required.
+  // Languages in an optional clause are skipped; "A or B" needs any one of them.
+  const groups = requirement.text
+    .split(/[;.]/)
+    .map((clause) => ({ clause, langs: requirement.languages.filter((l) => textHasTerm(LANGUAGE_NAMES, l, clause)) }))
+    .filter((g) => g.langs.length && !OPTIONAL_CLAUSE.test(g.clause))
+    .map((g) => ({ langs: g.langs, any: g.langs.length > 1 && ALTERNATIVE.test(g.clause) }));
+  if (!groups.length) groups.push({ langs: requirement.languages, any: requirement.languages.length > 1 && ALTERNATIVE.test(requirement.text) });
+  const results = groups.map((g) => {
+    const r = g.langs.map(one);
+    if (g.any) return r.includes("met") ? "met" : r.includes("unknown") ? "unknown" : "not_met";
+    return r.every((x) => x === "met") ? "met" : r.includes("not_met") ? "not_met" : "unknown";
   });
   const status: MatchStatus = results.every((r) => r === "met") ? "met" : results.includes("not_met") ? "not_met" : "unknown";
   const quotes = quotesFor(cv, (line) => requirement.languages.some((language) => textHasTerm(LANGUAGE_NAMES, language, line)), 2);

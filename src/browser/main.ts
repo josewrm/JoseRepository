@@ -23,7 +23,9 @@ import cvGeneral from "../../test/fixtures/ejemplo/cv-general-es.md";
 import cvEwm from "../../test/fixtures/ejemplo/cv-ewm-es.md";
 import cvEnglish from "../../test/fixtures/ejemplo/cv-english.md";
 
-const STORAGE_KEY = "apply2interview.records.v2";
+/** Private build only: the candidate's own profile, injected at build time (see scripts/build-artifact.ts). */
+const SEED = (window as any).A2I_SEED as { profile: { source_cvs: { label: string; text: string }[]; candidate_facts: Record<string, unknown>; search?: Record<string, unknown> } } | undefined;
+const STORAGE_KEY = SEED ? "jarvis.private.records.v1" : "apply2interview.records.v2";
 const AUTH = "HostAuth browser-local";
 const EXAMPLE_URL = "https://empleo.example.test/logistica-norte/desarrollador-sap-ewm";
 const EXAMPLE_SOURCES = [
@@ -84,7 +86,7 @@ const fetchImpl = (async (input: string | URL | Request) => {
 
 const store = new RecordStore(db, { authorize: (auth) => auth === AUTH });
 const service = new Apply2InterviewService(store, { authorization: AUTH, fetchImpl });
-const assistant = new Assistant(new HostStore(db), service, { fetchImpl, exampleLeads: EXAMPLE_LEADS });
+const assistant = new Assistant(new HostStore(db), service, { fetchImpl, exampleLeads: SEED ? [] : EXAMPLE_LEADS });
 
 const deps: RouteDeps = {
   service,
@@ -97,6 +99,14 @@ const deps: RouteDeps = {
 
 async function seed(): Promise<void> {
   service.ensureParticipants();
+  if (SEED) {
+    // Private edition: your profile, no example jobs or example application.
+    if (!assistant.profile().sources.length) {
+      assistant.saveProfile(SEED.profile);
+      save();
+    }
+    return;
+  }
   if (!assistant.profile().sources.length) {
     // Example profile and example jobs so the assistant opens with something to show.
     assistant.saveProfile({ source_cvs: EXAMPLE_SOURCES, candidate_facts: EXAMPLE_FACTS, search: { query: "SAP EWM", location: "España" } });
@@ -127,6 +137,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 (window as any).A2I_BROWSER = {
+  privateEdition: Boolean(SEED),
   exampleUrl: EXAMPLE_URL,
   exampleSources: EXAMPLE_SOURCES,
   exampleFacts: EXAMPLE_FACTS,

@@ -50,17 +50,22 @@ export interface StructuredJd {
 type SectionKind = "must" | "nice" | "responsibilities" | "other";
 
 const HEADING_PATTERNS: [SectionKind, RegExp][] = [
-  ["nice", /(nice[- ]to[- ]have|preferred|bonus|plus points?|desirable|deseable|valorable|se valorar[áa]|wünschenswert|von vorteil|atouts?|souhait|diferencia|gerne gesehen)/i],
-  ["must", /(requirements?|qualifications?|must[- ]haves?|what you bring|what we('| a)re looking for|you have|your profile|who you are|about you|skills|requisitos|requerimientos|lo que buscamos|tu perfil|imprescindible|se requiere|anforderungen|ihr profil|dein profil|was du mitbringst|was sie mitbringen|voraussetzungen|profil recherch|exigences|comp[ée]tences requises|qualifica[çc][õo]es|requisiti)/i],
-  ["responsibilities", /(responsibilit|what you('| wi)ll do|your role|the role|tasks|duties|day to day|responsabilidades|funciones|tus tareas|aufgaben|tätigkeiten|deine rolle|missions?|vos missions|atribui[çc][õo]es|mansioni)/i],
-  ["other", /(benefits|what we offer|perks|about us|who we are|our company|ofrecemos|beneficios|sobre nosotros|wir bieten|über uns|benefits|avantages|qui sommes|o que oferecemos|offriamo|salary|compensation|equal opportunit)/i],
+  ["nice", /(nice[- ]to[- ]have|preferred|bonus|plus points?|\(plus\)|desirable|deseable|valorable|se valorar[áa]|wünschenswert|von vorteil|atouts?|souhait|diferencia|gerne gesehen)/i],
+  ["other", /(benefits|what we offer|on offer|perks|about us|about \w+:?$|who we are|who are we|our company|ofrecemos|ofrecerte|podemos ofrecer|offer you|beneficios|sobre nosotros|wir bieten|was wir ihnen bieten|über uns|avantages|qui sommes|o que oferecemos|offriamo|salary|compensation|equal opportunit|^why\b|weitere informationen|kontakt|^contact|^source|^facts$|recruitment process|processus de recrutement|haben wir|arbeitgeber auszeichnet|arbeitsumfeld|votre équipe|hiring manager|where is this role)/i],
+  ["must", /(requirements?|qualifications?|qualifikation|must[- ]haves?|what you bring|what you need|looking for|you have|will have|your profile|your experience|key skills|skillcheck|tech stack|who you are|about you|skills|requisitos|requerimientos|lo que buscamos|perfil buscamos|qu[ée] perfil|tu perfil|^perfil|imprescindible|se requiere|anforderungen|ihr profil|dein profil|was du mitbringst|was sie mitbringen|voraussetzungen|kompetenzen|ausbildung|fachhintergrund|^profile?$|profil recherch|votre profil|vos comp[ée]tences|exigences|comp[ée]tences requises|qualifica[çc][õo]es|requisiti)/i],
+  ["responsibilities", /(responsibilit|what you('| wi)ll do|what type of work|your role|the role|the opportunity|scope|tasks|duties|day to day|responsabilidades|funciones|tus tareas|aufgaben|tätigkeiten|verantwortung|deine rolle|missions?|vos missions|atribui[çc][õo]es|mansioni|challengecheck|^description)/i],
 ];
 
 function headingKind(line: string): SectionKind | null {
-  const raw = line.replace(/^#+\s*/, "").trim();
-  const isHeading = line.startsWith("## ") || (raw.length <= 60 && /:$/.test(raw)) || (raw.length <= 40 && !/[.!?]$/.test(raw) && raw.split(" ").length <= 6 && !line.startsWith("- "));
+  const raw = line.replace(/^#+\s*/, "").replace(/^[^\p{L}\p{N}¿(#]+/u, "").trim();
+  const isHeading =
+    line.startsWith("## ") ||
+    /^#\w+$/.test(line) ||
+    (raw.length <= 80 && /:$/.test(raw)) ||
+    (raw.length <= 70 && /\?$/.test(raw)) ||
+    (raw.length <= 50 && !/[.!;]$/.test(raw) && raw.split(" ").length <= 7 && !line.startsWith("- "));
   if (!isHeading) return null;
-  for (const [kind, pattern] of HEADING_PATTERNS) if (pattern.test(raw)) return kind;
+  for (const [kind, pattern] of HEADING_PATTERNS) if (pattern.test(raw.replace(/^#/, ""))) return kind;
   return line.startsWith("## ") ? "other" : null;
 }
 
@@ -132,6 +137,10 @@ export function structureJd(snapshot: JobPageSnapshot, snapshotHash: string): St
     const bullets = lines.filter((l) => l.startsWith("- ")).map(cleanBullet);
     mustLines = bullets.filter((l) => /(experience|knowledge|years|proficien|familiar|degree|fluent|skills?|experiencia|conocimientos|erfahrung|kenntnisse|expérience)/i.test(l));
     niceLines = [];
+  }
+  if (!mustLines.length && !niceLines.length) {
+    // Still nothing: keep the posting's own lines that name a known skill (verbatim, outside benefits).
+    mustLines = requirementLines([...unsectioned, ...buckets.responsibilities]).filter((l) => findTerms(ALL_TERMS, l).length && l.length <= 200).slice(0, 12);
   }
   let counter = 0;
   const reqs = [

@@ -6,9 +6,9 @@
     "semantic_hash": ""
   },
   "public/app.js": {
-    "mtime": 1790894632.492171,
-    "seen": 1790894665.1269076,
-    "ast_hash": "5c3dc313403d2ad6a7361213376e5aef",
+    "mtime": 1790896397.6957786,
+    "seen": 1790896439.0656345,
+    "ast_hash": "5d6a0f7dfdb041faf1cfbcabdaf549d7",
     "semantic_hash": ""
   },
   "saudo2.py": {
@@ -18,9 +18,9 @@
     "semantic_hash": ""
   },
   "scripts/build-artifact.ts": {
-    "mtime": 1790894578.016985,
-    "seen": 1790894665.126911,
-    "ast_hash": "cd97c1a89c460c6b23ea014adf629d0e",
+    "mtime": 1790896158.20263,
+    "seen": 1790896439.0656385,
+    "ast_hash": "02479798685b4dc6f18da99a7f01294a",
     "semantic_hash": ""
   },
   "scripts/validate-export.ts": {
@@ -48,9 +48,9 @@
     "semantic_hash": ""
   },
   "src/adapters/job-link.ts": {
-    "mtime": 1790884902.3552969,
-    "seen": 1790894421.741202,
-    "ast_hash": "51379902d43142c38c66bce0caf191d7",
+    "mtime": 1790895776.538235,
+    "seen": 1790896439.0656447,
+    "ast_hash": "5ba153e376e7600b25a43cfc43dbc600",
     "semantic_hash": ""
   },
   "src/app/application-package.ts": {
@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "src/app/service.ts": {
-    "mtime": 1790894499.9560356,
-    "seen": 1790894665.1269238,
-    "ast_hash": "9b112bcf7c74eaa57599a72d8af35a50",
+    "mtime": 1790895902.838406,
+    "seen": 1790896439.0656543,
+    "ast_hash": "5a9bde69e7220f92abc6f942cfa6e4f3",
     "semantic_hash": ""
   },
   "src/browser/assets.d.ts": {
@@ -84,9 +84,9 @@
     "semantic_hash": ""
   },
   "src/browser/main.ts": {
-    "mtime": 1790893045.5862525,
-    "seen": 1790894421.7412071,
-    "ast_hash": "3230c9e2cec3cae320a619900ebc4e82",
+    "mtime": 1790896139.2450793,
+    "seen": 1790896439.0656571,
+    "ast_hash": "a41f5592b9a407708bb4048c26407cec",
     "semantic_hash": ""
   },
   "src/email/drafter.ts": {
@@ -156,9 +156,9 @@
     "semantic_hash": ""
   },
   "src/server/http.ts": {
-    "mtime": 1790889249.2919524,
-    "seen": 1790894421.7412162,
-    "ast_hash": "e98d76442092d1d3781fcc1fa6e8227f",
+    "mtime": 1790895982.6840143,
+    "seen": 1790896439.0656688,
+    "ast_hash": "4942e4545387f5f6cd8c5f28358b3d57",
     "semantic_hash": ""
   },
   "src/server/mailer.ts": {
@@ -168,27 +168,27 @@
     "semantic_hash": ""
   },
   "src/server/main.ts": {
-    "mtime": 1790892796.2900794,
-    "seen": 1790894421.7412176,
-    "ast_hash": "4624364267463b21d14176bb2ef1f811",
+    "mtime": 1790895982.68449,
+    "seen": 1790896439.0656707,
+    "ast_hash": "fd2fbc85b66377b47ca2f04d25b7e6d1",
     "semantic_hash": ""
   },
   "src/server/routes.ts": {
-    "mtime": 1790892796.290437,
-    "seen": 1790894421.7412183,
-    "ast_hash": "eee6663b597feb1880eb3bf4dd0201e8",
+    "mtime": 1790895972.768804,
+    "seen": 1790896439.065672,
+    "ast_hash": "ed5acaea1166f22248697ee91f1c7abb",
     "semantic_hash": ""
   },
   "src/store/db.ts": {
-    "mtime": 1790889181.5704865,
-    "seen": 1790894421.741219,
-    "ast_hash": "3151ee3c0ffc84c918daef460b6e3421",
+    "mtime": 1790895794.724668,
+    "seen": 1790896439.0656726,
+    "ast_hash": "9adc12a148b4a5018a3d6a78a7014ac9",
     "semantic_hash": ""
   },
   "src/store/memory-db.ts": {
-    "mtime": 1790889181.5708609,
-    "seen": 1790894421.7412195,
-    "ast_hash": "2640a83cf58235085a57c48cf0debb0a",
+    "mtime": 1790895794.7253945,
+    "seen": 1790896439.0656745,
+    "ast_hash": "66ec20b13f7ef1c16881f61fdd858e08",
     "semantic_hash": ""
   },
   "src/store/record-store.ts": {
@@ -258,15 +258,15 @@
     "semantic_hash": ""
   },
   "docs/host-architecture.md": {
-    "mtime": 1790893124.8619478,
-    "seen": 1790894421.741229,
-    "ast_hash": "673314747616c8af244bb47f966fe607",
+    "mtime": 1790896425.4257352,
+    "seen": 1790896439.0656986,
+    "ast_hash": "1b226cb069d809266f72a3c48604a7a1",
     "semantic_hash": ""
   },
   "public/index.html": {
-    "mtime": 1790894578.0166776,
-    "seen": 1790894665.1269693,
-    "ast_hash": "8656da3c98d27936bec0c3417629d844",
+    "mtime": 1790896150.159568,
+    "seen": 1790896439.0656993,
+    "ast_hash": "9257a58a0502c823988e3f528a59490b",
     "semantic_hash": ""
   },
   "test/fixtures/ejemplo/cv-english.md": {
@@ -393,6 +393,78 @@
     "mtime": 1790894445.846596,
     "seen": 1790894665.1269667,
     "ast_hash": "82efb97a359f5c7290bf2513d14686be",
+    "semantic_hash": ""
+  },
+  "src/adapters/job-search.ts": {
+    "mtime": 1790896038.7104201,
+    "seen": 1790896439.0656464,
+    "ast_hash": "c14df83a06e989cd1ec1b4f4d7d66cd4",
+    "semantic_hash": ""
+  },
+  "src/app/assistant.ts": {
+    "mtime": 1790895987.6167169,
+    "seen": 1790896439.0656497,
+    "ast_hash": "53add28019e9799fd1be6c52601273ec",
+    "semantic_hash": ""
+  },
+  "src/app/commands.ts": {
+    "mtime": 1790895950.765707,
+    "seen": 1790896439.0656507,
+    "ast_hash": "da684ba16cdb680dc633a269abc83b50",
+    "semantic_hash": ""
+  },
+  "src/store/host-store.ts": {
+    "mtime": 1790895987.6145587,
+    "seen": 1790896439.0656736,
+    "ast_hash": "523b37c248193c4da003ad641f23d50b",
+    "semantic_hash": ""
+  },
+  "test/assistant.test.ts": {
+    "mtime": 1790896083.549697,
+    "seen": 1790896439.0656762,
+    "ast_hash": "3c1b3fa1c1479c32c2d4a35031b36b53",
+    "semantic_hash": ""
+  },
+  "vendor/ai-job-search/linkedin-search/helpers.ts": {
+    "mtime": 1790895753.7839649,
+    "seen": 1790896439.0656848,
+    "ast_hash": "c291f7ce0208d9bb86c546306589e138",
+    "semantic_hash": ""
+  },
+  "test/fixtures/linkedin/detail-4100000001.html": {
+    "mtime": 1790896022.9113274,
+    "seen": 1790896439.0657067,
+    "ast_hash": "fcdd5bbddb92b1fa29c155d7661ad0a5",
+    "semantic_hash": ""
+  },
+  "test/fixtures/linkedin/detail-4100000002.html": {
+    "mtime": 1790896022.911364,
+    "seen": 1790896439.0657077,
+    "ast_hash": "301a4b54eb3cf850769383b40f52681a",
+    "semantic_hash": ""
+  },
+  "test/fixtures/linkedin/detail-4100000003.html": {
+    "mtime": 1790896022.9113982,
+    "seen": 1790896439.0657089,
+    "ast_hash": "af05b498bf6da8356b12d82ae3e5fc9a",
+    "semantic_hash": ""
+  },
+  "test/fixtures/linkedin/detail-4100000004.html": {
+    "mtime": 1790896022.9114363,
+    "seen": 1790896439.0657096,
+    "ast_hash": "ddf9eec73f7255f8305f16c7f12b29e5",
+    "semantic_hash": ""
+  },
+  "test/fixtures/linkedin/search.html": {
+    "mtime": 1790896038.7159007,
+    "seen": 1790896439.0657103,
+    "ast_hash": "c9a3e9307e20bee5f05b6887cc74adde",
+    "semantic_hash": ""
+  },
+  "vendor/ai-job-search/README.md": {
+    "mtime": 1790895753.7901766,
+    "seen": 1790896439.065711,
+    "ast_hash": "f74943605e6f439b6edf985952c4cdd6",
     "semantic_hash": ""
   }
 }
