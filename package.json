@@ -1,0 +1,25 @@
+{
+  "name": "apply2interview",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Apply2Interview: one job link in, one governed Jarvis WorkSession out. A host implementing the Jarvis v0.1 protocol.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server/main.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "validate:export": "node --disable-warning=ExperimentalWarning scripts/validate-export.ts",
+    "demo": "node --disable-warning=ExperimentalWarning scripts/demo.ts"
+  },
+  "dependencies": {
+    "@jarvis-protocol/sdk": "file:../jarvis/packages/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "typescript": "^5.9.0"
+  }
+}
