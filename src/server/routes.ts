@@ -1,4 +1,5 @@
 import { Apply2InterviewService, UserError } from "../app/service.ts";
+import type { Assistant } from "../app/assistant.ts";
 import { HUMAN_ACTOR_ID } from "../app/participants.ts";
 import { JarvisError, PROTOCOL_VERSION, type ProtocolRecord } from "../protocol/jarvis.ts";
 import { TruthGuardError } from "../adapt/truth-guard.ts";
@@ -20,6 +21,7 @@ export interface PackResult {
 
 export interface RouteDeps {
   service: Apply2InterviewService;
+  assistant?: Assistant;
   exportPack: (workSessionId: string) => PackResult;
   onOutcome?: (workSessionId: string) => void;
 }
@@ -63,6 +65,11 @@ type Handler = (m: RegExpMatchArray, body: any) => Promise<ApiResponse | unknown
 
 export async function handleApi(deps: RouteDeps, req: ApiRequest): Promise<ApiResponse> {
   const { service } = deps;
+  const assistant = () => {
+    if (!deps.assistant) throw new HttpError(404, { error: "Assistant not enabled" });
+    return deps.assistant;
+  };
+  const ids = (body: any) => (Array.isArray(body.ids) ? body.ids.map(String) : undefined);
   const routes: [string, RegExp, Handler][] = [
     ["GET", /^\/api\/sessions$/, () => ({ sessions: service.listSessions() })],
     ["POST", /^\/api\/sessions$/, async (_m, body) => {
@@ -120,6 +127,14 @@ export async function handleApi(deps: RouteDeps, req: ApiRequest): Promise<ApiRe
       if (!patches.length) throw new HttpError(404, { error: "No CV patch." });
       return { status: 200, body: patches[patches.length - 1].patch, filename: `${m[1]}-cvs-best-version.json` };
     }],
+    ["GET", /^\/api\/profile$/, () => ({ profile: assistant().profile(), terms: assistant().profileTerms() })],
+    ["POST", /^\/api\/profile$/, (_m, body) => ({ profile: assistant().saveProfile(body), terms: assistant().profileTerms() })],
+    ["GET", /^\/api\/jobs$/, () => ({ leads: assistant().leads(), summary: assistant().summary() })],
+    ["POST", /^\/api\/jobs\/search$/, async (_m, body) => ({ leads: await assistant().search(body), summary: assistant().summary() })],
+    ["POST", /^\/api\/jobs\/prepare$/, async (_m, body) => ({ leads: await assistant().prepare(ids(body)), summary: assistant().summary() })],
+    ["POST", /^\/api\/jobs\/approve-all$/, async (_m, body) => ({ ...(await assistant().approveAll(ids(body))), summary: assistant().summary() })],
+    ["POST", /^\/api\/jobs\/([\w-]+)\/submitted$/, (m) => ({ lead: assistant().markSubmitted(m[1]), summary: assistant().summary() })],
+    ["POST", /^\/api\/assistant\/command$/, async (_m, body) => ({ ...(await assistant().command(String(body.text ?? ""))), leads: assistant().leads(), summary: assistant().summary() })],
     ["GET", /^\/api\/memory$/, () => ({ memory: service.store.listMemory() })],
     // Read-only Jarvis binding surface (requires Jarvis read headers).
     ["GET", /^\/jarvis\/work-sessions\/([\w-]+)$/, (m) => {

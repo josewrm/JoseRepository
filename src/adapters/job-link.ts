@@ -1,4 +1,5 @@
 import { htmlToText, jobPostingJsonLd, pageTitle } from "./html.ts";
+import { linkedInDetailUrl, linkedInJobId, snapshotFromLinkedInDetail } from "./job-search.ts";
 
 /**
  * Job-link adapter. Fetches a PUBLIC job page only: no cookies, no login,
@@ -64,6 +65,21 @@ export async function fetchJobPage(rawUrl: string, options: FetchOptions = {}): 
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? (() => new Date());
   const minText = options.minTextLength ?? 300;
+
+  // LinkedIn job views need a login; the same posting is public on the guest detail endpoint.
+  const linkedInId = linkedInJobId(checked.url.href);
+  if (linkedInId) {
+    try {
+      const detail = await fetchImpl(linkedInDetailUrl(linkedInId), { credentials: "omit", signal: AbortSignal.timeout(options.timeoutMs ?? 15_000) });
+      if (detail.ok) {
+        const snapshot = snapshotFromLinkedInDetail(await detail.text(), linkedInId, { url: checked.url.href, finalUrl: linkedInDetailUrl(linkedInId), status: detail.status, fetchedAt: now().toISOString() });
+        if (snapshot) return { ok: true, snapshot };
+      }
+      return { ok: false, reason: "login_wall", detail: `LinkedIn did not return a public description for job ${linkedInId} (HTTP ${detail.status}).`, http_status: detail.status };
+    } catch (error) {
+      return { ok: false, reason: "network_error", detail: `Fetch failed: ${(error as Error).message}` };
+    }
+  }
 
   let response: Response;
   try {

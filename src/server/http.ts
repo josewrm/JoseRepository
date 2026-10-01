@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { Apply2InterviewService } from "../app/service.ts";
+import type { Assistant } from "../app/assistant.ts";
 import { HUMAN_ACTOR_ID } from "../app/participants.ts";
 import { exportEvidencePack, exportOutcomeReports } from "../export/evidence-export.ts";
 import { buildEvidencePack } from "../export/evidence-pack.ts";
@@ -13,6 +14,7 @@ const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".j
 
 export interface ServerOptions {
   service: Apply2InterviewService;
+  assistant?: Assistant;
   /** Host auth token. The UI receives it in the page; the API requires it. */
   token: string;
   exportDir: string;
@@ -59,6 +61,7 @@ export function createAppServer(options: ServerOptions): Server {
   const authHeader = `HostAuth ${token}`;
   const deps = {
     service,
+    assistant: options.assistant,
     exportPack: (wsId: string): PackResult => {
       const written = exportEvidencePack(service.store, wsId, options.exportDir, HUMAN_ACTOR_ID);
       const files = buildEvidencePack(service.store, wsId, HUMAN_ACTOR_ID).files;

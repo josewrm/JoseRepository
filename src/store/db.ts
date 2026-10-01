@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS approval_uses (
   uses            INTEGER NOT NULL
 );
 
+-- Assistant profile (the candidate's own CVs and facts) and jobs found. Host data.
+CREATE TABLE IF NOT EXISTS profile (
+  id              TEXT PRIMARY KEY,
+  json            TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS job_leads (
+  id              TEXT PRIMARY KEY,
+  json            TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+
 -- Durable memory. Written only from an accepted MemoryProposal.
 CREATE TABLE IF NOT EXISTS memory (
   id                  TEXT PRIMARY KEY,

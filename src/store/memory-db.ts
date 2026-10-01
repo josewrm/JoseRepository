@@ -19,7 +19,7 @@ export interface SqlDatabase {
   prepare(sql: string): SqlStatement;
 }
 
-const TABLES = ["records", "record_versions", "events", "idempotency", "operations", "artifacts", "host_sessions", "approval_uses", "memory"];
+const TABLES = ["records", "record_versions", "events", "idempotency", "operations", "artifacts", "host_sessions", "approval_uses", "memory", "profile", "job_leads"];
 
 const norm = (sql: string) => sql.replace(/\s+/g, " ").trim();
 
@@ -31,6 +31,7 @@ export class MemoryDatabase implements SqlDatabase {
   constructor(serialized?: string) {
     const parsed = serialized ? JSON.parse(serialized) : null;
     this.tables = parsed?.tables ?? Object.fromEntries(TABLES.map((t) => [t, []]));
+    for (const table of TABLES) this.tables[table] ??= [];
     this.seq = parsed?.seq ?? 0;
   }
 
@@ -185,6 +186,27 @@ export class MemoryDatabase implements SqlDatabase {
         return () => list([...r("memory")].sort(byRowid), "*");
       case "SELECT * FROM memory WHERE memory_scope = ? ORDER BY rowid":
         return ([scope]) => list(r("memory").filter((x) => x.memory_scope === scope).sort(byRowid), "*");
+      // assistant profile and job leads
+      case "SELECT json FROM profile WHERE id = ?":
+        return ([id]) => list(r("profile").filter((x) => x.id === id), ["json"]);
+      case "INSERT INTO profile (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at":
+        return ([id, json, at]) => {
+          const row = r("profile").find((x) => x.id === id);
+          if (row) Object.assign(row, { json, updated_at: at });
+          else this.insert("profile", { id, json, updated_at: at });
+          return [];
+        };
+      case "SELECT json FROM job_leads ORDER BY rowid":
+        return () => list([...r("job_leads")].sort(byRowid), ["json"]);
+      case "SELECT json FROM job_leads WHERE id = ?":
+        return ([id]) => list(r("job_leads").filter((x) => x.id === id), ["json"]);
+      case "INSERT INTO job_leads (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at":
+        return ([id, json, at]) => {
+          const row = r("job_leads").find((x) => x.id === id);
+          if (row) Object.assign(row, { json, updated_at: at });
+          else this.insert("job_leads", { id, json, updated_at: at });
+          return [];
+        };
       default:
         return null;
     }

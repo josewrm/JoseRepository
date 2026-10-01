@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { openDatabase } from "../store/db.ts";
 import { RecordStore } from "../store/record-store.ts";
 import { Apply2InterviewService } from "../app/service.ts";
+import { Assistant } from "../app/assistant.ts";
+import { HostStore } from "../store/host-store.ts";
 import { createAppServer } from "./http.ts";
 import { smtpMailerFromEnv } from "./mailer.ts";
 import { validatePack } from "../../scripts/validate-export.ts";
@@ -18,9 +20,11 @@ const store = new RecordStore(db, { authorize: (auth) => auth === `HostAuth ${to
 const mailer = smtpMailerFromEnv();
 const service = new Apply2InterviewService(store, { authorization: `HostAuth ${token}`, mailer });
 service.ensureParticipants();
+const assistant = new Assistant(new HostStore(db), service);
 
 const server = createAppServer({
   service,
+  assistant,
   token,
   exportDir: resolve(root, "exports"),
   outcomeDir: resolve(root, "outcome-reports"),

@@ -98,6 +98,7 @@ interface HostState {
   source_scores_ref?: string;
   patch_files?: Record<string, string>;
   email_receipt_ref?: string;
+  external_submission?: string;
 }
 
 interface ParsedSource extends SourceCvInput {
@@ -1100,6 +1101,24 @@ export class Apply2InterviewService {
     this.setState(wsId, { email_sent: true });
   }
 
+  /**
+   * The HumanWorker reports that they submitted the application themselves on an
+   * external site (LinkedIn Easy Apply, an ATS). The host never submits there.
+   */
+  markSubmittedExternally(wsId: string, where: string): void {
+    const state = this.state(wsId);
+    if (!state.accepted_cv_ref) throw new UserError("Aprueba primero una versión del CV.", 409);
+    if (state.external_submission) return;
+    const acceptedEvent = this.store.listEvents(wsId).find((e) => e.payload?.field_refs?.includes(state.accepted_cv_ref));
+    const lastEvent = this.store.listEvents(wsId).at(-1);
+    this.contribute(wsId, "human", "submission", {
+      events: [(acceptedEvent ?? lastEvent)!.id],
+      artifacts: [state.accepted_cv_ref],
+      limitations: [`note:submitted by the HumanWorker at ${where.slice(0, 120)}`],
+    });
+    this.setState(wsId, { external_submission: where.slice(0, 120) });
+  }
+
   /** Learning pass: proposals only. Memory proposals each open a confirm Request. */
   proposeLearning(wsId: string): void {
     const { ws, host } = this.session(wsId);
@@ -1307,6 +1326,7 @@ export class Apply2InterviewService {
         email_handoff: artifact(state.email_handoff_ref),
       },
       email_sent: Boolean(state.email_sent),
+      external_submission: state.external_submission ?? null,
       can_send_email: Boolean(this.mailer),
       target_pct: TARGET_PCT,
       best_label: state.best_label ?? null,
