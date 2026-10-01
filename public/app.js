@@ -5,7 +5,8 @@ const TOKEN = document.querySelector('meta[name="host-auth"]').content;
 const BROWSER = window.A2I_BROWSER ?? null;
 const main = document.getElementById("main");
 let current = null;
-let page = "inicio";
+let page = "mapa";
+let raf = 0;
 let cvTab = null;
 let jarvisTab = "timeline";
 
@@ -94,7 +95,7 @@ async function loadSidebar() {
 async function openSession(id, nextPage) {
   current = await api("GET", `/api/sessions/${id}`);
   if (nextPage) page = nextPage;
-  else if (page === "inicio") page = pending().length ? "envio" : "evaluacion";
+  else if (page === "inicio") page = "mapa";
   cvTab = null;
   render();
   loadSidebar();
@@ -138,13 +139,159 @@ function gauge(before, after, target) {
 function render() {
   document.querySelectorAll("#menu button").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
   renderStatus();
-  const pages = { inicio: pageInicio, oferta: pageOferta, cvs: pageCvs, evaluacion: pageEvaluacion, envio: pageEnvio, jarvis: pageJarvis };
-  if (page !== "inicio" && !current) {
+  cancelAnimationFrame(raf);
+  const pages = { mapa: pageMapa, inicio: pageInicio, oferta: pageOferta, cvs: pageCvs, evaluacion: pageEvaluacion, envio: pageEnvio, jarvis: pageJarvis };
+  if (page !== "inicio" && page !== "mapa" && !current) {
     main.innerHTML = `<section class="panel"><h2>Elige o crea una postulación</h2><p class="muted">Empieza en Inicio con un enlace de oferta y hasta tres CVs.</p></section>`;
     return;
   }
   main.innerHTML = pages[page]();
   bind();
+  if (page === "mapa") startMap();
+}
+
+// ------------------------------------------------------------------ HUD map
+
+/** Directive rows: what this WorkSession still needs, with progress. */
+function directives() {
+  const v = current;
+  if (!v) return [];
+  const ev = v.evaluation;
+  const best = ev ? ev.sources.find((x) => x.label === ev.best_label) : null;
+  const form = v.form;
+  const filled = form ? form.fields.filter((f) => f.value).length : 0;
+  const sendWait = Boolean(pendingFor("send_application_email") || pendingFor("accept_cv_version"));
+  const sent = v.email_sent ? 100 : v.artifacts.email_handoff ? 70 : sendWait ? 40 : 0;
+  return [
+    { page: "oferta", t: "Extraer oferta completa", pct: v.artifacts.jd ? 100 : 0, tag: pendingFor("use_human_supplied_jd") ? "PEGA LA OFERTA" : v.artifacts.jd ? (v.artifacts.jd.language ?? "").toUpperCase() : "—", wait: Boolean(pendingFor("use_human_supplied_jd")), meta: v.artifacts.jd ? `${v.artifacts.jd.must_haves.length} imprescindibles` : "sin oferta" },
+    { page: "cvs", t: "Adaptar CVs de origen", pct: v.sources.length ? Math.round((100 * (ev?.sources.length ?? 0)) / v.sources.length) : 0, tag: `${ev?.sources.length ?? 0}/${v.sources.length} CV`, wait: Boolean(pendingFor("accept_cv_version")), meta: v.artifacts.accepted_cv ? `aceptado: ${v.artifacts.accepted_cv.source_label}` : "por aprobar" },
+    { page: "evaluacion", t: `Superar ${v.target_pct}%`, pct: best ? best.after.pct : 0, tag: best ? `${best.before.pct}→${best.after.pct}%` : "—", wait: Boolean(best && best.after.pct < v.target_pct), meta: best ? `mejor: ${best.label}` : "sin evaluar" },
+    { page: "envio", t: "Rellenar formulario", pct: form ? Math.round((100 * filled) / form.fields.length) : 0, tag: form ? (form.missing.length ? `FALTAN ${form.missing.length}` : "COMPLETO") : "—", wait: Boolean(form?.missing.length), meta: form ? `${filled}/${form.fields.length} campos` : "sin datos" },
+    { page: "envio", t: "Aprobar y enviar", pct: sent, tag: v.email_sent ? "ENVIADO" : v.artifacts.email_handoff ? "EN TUS MANOS" : sendWait ? "1 CLIC" : "—", wait: sendWait, meta: v.email_sent ? "enviado" : sendWait ? "espera tu clic" : "" },
+    { page: "jarvis", t: "Evidencia Jarvis", pct: Math.min(100, v.evidence.length * 10), tag: `REV ${v.work_session.revision}`, wait: false, meta: `${v.evidence.length} evidencias · ${v.events.length} eventos` },
+  ];
+}
+
+function pageMapa() {
+  const v = current;
+  const title = v?.artifacts.jd?.title ?? "Sin postulación";
+  const rows = directives();
+  return `<section class="hud">
+    <div class="directives">
+      <div class="row between"><span class="hud-label">Directivas // WorkSession</span><span class="tag">${rows.length} ítems</span></div>
+      ${rows.length ? rows.map((d) => `<div class="directive" data-goto="${d.page}" tabindex="0" role="button">
+        <div class="row between"><span class="t">${esc(d.t)}</span><span class="tag ${d.wait ? "wait" : ""}">${esc(d.tag)}</span></div>
+        <div class="bar ${d.wait ? "wait" : ""}"><i style="width:${d.pct}%"></i></div>
+        <div class="meta"><span>${esc(d.meta)}</span><span>${d.pct}%</span></div></div>`).join("") : `<div class="directive" data-goto="inicio"><span class="t">Nueva postulación</span><div class="meta"><span>Empieza con un enlace y tus CVs</span></div></div>`}
+    </div>
+    <div class="map" id="map">
+      <div class="corner">Sector // <b>Apply2Interview</b><br>Foco // <b>${esc(title)}</b></div>
+      <canvas id="map-canvas" aria-label="Mapa de la WorkSession: pulsa un nodo para abrir su página"></canvas>
+      <div class="legend"><span><i class="dot" style="background:#9fe6ff;box-shadow:0 0 8px #4fb3ff"></i>hecho</span><span><i class="dot" style="background:#ffc76b"></i>espera tu decisión</span><span><i class="dot" style="background:#27486e"></i>pendiente</span></div>
+    </div>
+  </section>`;
+}
+
+function mapModel() {
+  const v = current;
+  const ev = v?.evaluation;
+  const state = (done, wait) => (wait ? "wait" : done ? "done" : "idle");
+  const nodes = [
+    { id: "ws", label: "WORKSESSION", sub: v ? `REV ${v.work_session.revision}` : "", x: 0.55, y: 0.56, r: 30, state: v ? "done" : "idle", page: "jarvis" },
+    { id: "jd", label: "OFERTA", sub: v?.artifacts.jd ? (v.artifacts.jd.company ?? "") : "", x: 0.28, y: 0.3, r: 18, state: state(v?.artifacts.jd, pendingFor("use_human_supplied_jd")), page: "oferta" },
+    { id: "eval", label: "EVALUACIÓN", sub: ev ? `${ev.sources.find((x) => x.label === ev.best_label).after.pct}% / OBJ ${ev.target_pct}%` : "", x: 0.6, y: 0.24, r: 22, state: state(ev, ev && !ev.reached_target), page: "evaluacion" },
+    { id: "policy", label: "POLICY", sub: "deny by default", x: 0.42, y: 0.1, r: 10, state: v ? "done" : "idle", page: "jarvis" },
+    { id: "req", label: "REQUESTS", sub: v ? `${pending().length} abiertas` : "", x: 0.4, y: 0.44, r: 13, state: state(v, v && pending().length), page: "jarvis" },
+    { id: "form", label: "FORMULARIO", sub: v?.form ? `${v.form.fields.filter((f) => f.value).length}/${v.form.fields.length}` : "", x: 0.82, y: 0.38, r: 14, state: state(v?.form, v?.form?.missing.length), page: "envio" },
+    { id: "mail", label: "EMAIL", sub: v?.artifacts.email_draft ? (v.artifacts.email_draft.language ?? "").toUpperCase() : "", x: 0.9, y: 0.6, r: 12, state: state(v?.artifacts.email_draft, false), page: "envio" },
+    { id: "send", label: "ENVÍO", sub: v?.email_sent ? "enviado" : pendingFor("send_application_email") ? "1 clic" : "", x: 0.78, y: 0.82, r: 16, state: state(v?.email_sent || v?.artifacts.email_handoff, pendingFor("send_application_email")), page: "envio" },
+    { id: "evidence", label: "EVIDENCIA", sub: v ? `${v.evidence.length}` : "", x: 0.58, y: 0.86, r: 12, state: state(v?.evidence.length, false), page: "jarvis" },
+    { id: "memory", label: "MEMORIA", sub: v ? `${v.memory_proposals.length} propuestas` : "", x: 0.92, y: 0.16, r: 9, state: state(v?.memory_proposals.some((m) => m.status === "accepted"), pendingFor("confirm_memory")), page: "jarvis" },
+  ];
+  const slots = [[0.14, 0.52], [0.24, 0.74], [0.1, 0.84]];
+  (v?.sources ?? []).slice(0, 3).forEach((src, i) => {
+    const e = ev?.sources.find((x) => x.label === src.label);
+    nodes.push({ id: `cv${i}`, label: `CV ${src.label.toUpperCase()}`, sub: e ? `${e.before.pct}→${e.after.pct}%` : "", x: slots[i][0], y: slots[i][1], r: e && e.label === ev.best_label ? 17 : 12, state: state(e, e && e.label === ev.best_label && pendingFor("accept_cv_version")), page: "cvs" });
+  });
+  const edges = [["ws", "jd"], ["ws", "eval"], ["ws", "req"], ["ws", "evidence"], ["ws", "send"], ["ws", "policy"], ["policy", "req"], ["eval", "form"], ["form", "mail"], ["mail", "send"], ["req", "send"], ["eval", "memory"], ["ws", "form"]];
+  nodes.filter((n) => n.id.startsWith("cv")).forEach((n) => { edges.push(["jd", n.id]); edges.push([n.id, "eval"]); });
+  return { nodes, edges };
+}
+
+function startMap() {
+  const box = document.getElementById("map");
+  const canvas = document.getElementById("map-canvas");
+  if (!box || !canvas) return;
+  const ctx = canvas.getContext("2d");
+  const { nodes, edges } = mapModel();
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const color = { done: [159, 230, 255], wait: [255, 199, 107], idle: [39, 72, 110] };
+  let w = 0;
+  let h = 0;
+  const size = () => {
+    const dpr = window.devicePixelRatio || 1;
+    w = box.clientWidth;
+    h = box.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  size();
+  const pos = (n, t) => [n.x * w + (still ? 0 : Math.sin(t / 2400 + n.x * 9) * 3), n.y * h + (still ? 0 : Math.cos(t / 2800 + n.y * 7) * 3)];
+  const draw = (t) => {
+    ctx.clearRect(0, 0, w, h);
+    const [cx, cy] = pos(byId.ws, t);
+    ctx.strokeStyle = "rgba(79,179,255,0.10)";
+    for (const r of [90, 170, 250]) { ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+    for (const [a, b] of edges) {
+      const na = byId[a], nb = byId[b];
+      if (!na || !nb) continue;
+      const [ax, ay] = pos(na, t), [bx, by] = pos(nb, t);
+      const lit = na.state !== "idle" && nb.state !== "idle";
+      ctx.strokeStyle = lit ? "rgba(120,196,255,0.55)" : "rgba(79,179,255,0.15)";
+      ctx.lineWidth = lit ? 1.4 : 1;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      if (lit && !still) {
+        const k = ((t / 2600) + (ax + by) / 900) % 1;
+        ctx.fillStyle = "rgba(200,240,255,0.9)";
+        ctx.beginPath(); ctx.arc(ax + (bx - ax) * k, ay + (by - ay) * k, 1.8, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    for (const n of nodes) {
+      const [x, y] = pos(n, t);
+      const [r, g, b] = color[n.state];
+      const pulse = still ? 1 : 1 + Math.sin(t / 700 + n.x * 10) * 0.08;
+      const halo = ctx.createRadialGradient(x, y, 0, x, y, n.r * 3.2 * pulse);
+      halo.addColorStop(0, `rgba(${r},${g},${b},${n.state === "idle" ? 0.25 : 0.55})`);
+      halo.addColorStop(1, `rgba(${r},${g},${b},0)`);
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(x, y, n.r * 3.2 * pulse, 0, Math.PI * 2); ctx.fill();
+      const core = ctx.createRadialGradient(x - n.r * 0.3, y - n.r * 0.3, 1, x, y, n.r);
+      core.addColorStop(0, n.state === "idle" ? "rgba(90,130,170,0.9)" : "rgba(255,255,255,0.95)");
+      core.addColorStop(1, `rgba(${r},${g},${b},${n.state === "idle" ? 0.5 : 0.9})`);
+      ctx.fillStyle = core;
+      ctx.beginPath(); ctx.arc(x, y, n.r, 0, Math.PI * 2); ctx.fill();
+      ctx.font = `${n.r > 20 ? 13 : 11}px "Share Tech Mono", "JetBrains Mono", monospace`;
+      ctx.textAlign = "center";
+      ctx.fillStyle = n.state === "idle" ? "rgba(127,163,200,0.8)" : "#dcefff";
+      ctx.shadowColor = "rgba(79,179,255,0.8)";
+      ctx.shadowBlur = n.state === "idle" ? 0 : 8;
+      ctx.fillText(n.label, x, y + n.r + 16);
+      ctx.shadowBlur = 0;
+      if (n.sub) { ctx.fillStyle = n.state === "wait" ? "#ffc76b" : "rgba(127,163,200,0.95)"; ctx.font = '10.5px "Share Tech Mono", monospace'; ctx.fillText(n.sub, x, y + n.r + 29); }
+    }
+    if (!still) raf = requestAnimationFrame(draw);
+  };
+  draw(performance.now());
+  new ResizeObserver(() => { size(); if (still) draw(0); }).observe(box);
+  canvas.addEventListener("click", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = event.clientX - rect.left, py = event.clientY - rect.top;
+    const hit = nodes.find((n) => Math.hypot(n.x * w - px, n.y * h - py) < Math.max(n.r + 10, 22));
+    if (hit && (current || hit.page === "inicio")) { page = current ? hit.page : "inicio"; render(); }
+  });
 }
 
 function pageInicio() {
@@ -385,6 +532,11 @@ function requestCard(r) {
 
 function bind() {
   const id = current?.work_session.id;
+  main.querySelectorAll("[data-goto]").forEach((d) => {
+    const go = () => { page = d.dataset.goto; render(); };
+    d.addEventListener("click", go);
+    d.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
   main.querySelectorAll("[data-cvtab]").forEach((b) => b.addEventListener("click", () => { cvTab = b.dataset.cvtab; render(); }));
   main.querySelectorAll("[data-jtab]").forEach((b) => b.addEventListener("click", () => { jarvisTab = b.dataset.jtab; render(); }));
   main.querySelectorAll("[data-download]").forEach((b) => b.addEventListener("click", () => download(b.dataset.download)));
@@ -419,7 +571,7 @@ function bind() {
     };
     busy(async () => {
       current = await api("POST", "/api/sessions", { job_url: f.get("job_url"), jd_text: f.get("jd_text"), source_cvs: sources, candidate_facts: facts });
-      page = pending().some((r) => r.requested_action.action === "use_human_supplied_jd") ? "oferta" : "evaluacion";
+      page = "mapa";
       render();
       loadSidebar();
     });
@@ -472,6 +624,6 @@ render();
 loadSidebar()
   .then(async () => {
     const first = document.querySelector("#sessions li[data-id]");
-    if (first && !current) await openSession(first.dataset.id, "evaluacion");
+    if (first && !current) await openSession(first.dataset.id, "mapa");
   })
   .catch((error) => toast(error.message));
