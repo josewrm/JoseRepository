@@ -11,6 +11,10 @@ export interface CandidateFacts {
   languages?: string[];
   willing_to_relocate?: boolean;
   other?: string;
+  email?: string;
+  phone?: string;
+  linkedin?: string;
+  availability?: string;
 }
 
 export type MatchStatus = "met" | "not_met" | "unknown";
@@ -58,10 +62,19 @@ function quotesFor(cv: ParsedCv, test: (line: string) => boolean, limit = 3): st
   const quotes: string[] = [];
   // Experience bullets are the strongest evidence; skills lists the weakest.
   const ordered = [...cv.sections].sort((a, b) => QUOTE_ORDER.indexOf(a.kind) - QUOTE_ORDER.indexOf(b.kind));
+  // Achievement bullets first, then any other line (titles, summary, skills).
+  for (const section of ordered) {
+    for (const line of section.lines.filter(isBullet)) {
+      const clean = stripBullet(line);
+      if (clean && test(line) && !quotes.includes(clean)) quotes.push(clean.length > 220 ? `${clean.slice(0, 217)}...` : clean);
+      if (quotes.length >= limit) return quotes;
+    }
+  }
   for (const section of ordered) {
     for (const line of section.lines) {
       const clean = stripBullet(line);
-      if (clean && test(line) && !quotes.includes(clean)) quotes.push(clean.length > 220 ? `${clean.slice(0, 217)}...` : clean);
+      const quote = clean.length > 220 ? `${clean.slice(0, 217)}...` : clean;
+      if (clean && test(line) && !quotes.includes(quote)) quotes.push(quote);
       if (quotes.length >= limit) return quotes;
     }
   }
@@ -75,8 +88,8 @@ function contentWords(text: string): string[] {
 export function visaStatus(facts: CandidateFacts): "authorized" | "needs_sponsorship" | "unknown" {
   const visa = (facts.visa ?? "").toLowerCase();
   if (!visa.trim()) return "unknown";
-  if (/(no (visa |sponsorship )?(needed|required)|do(n't| not) (need|require)|citizen|permanent resident|authori[sz]ed|work permit|right to work|eu passport|green card|blue card|nie|residencia)/.test(visa)) return "authorized";
-  if (/(need|require|sponsor)/.test(visa)) return "needs_sponsorship";
+  if (/(no (visa |sponsorship )?(needed|required)|do(n't| not) (need|require)|citizen|permanent resident|authori[sz]ed|work permit|right to work|eu passport|green card|blue card|nie|residencia|ciudadan|nacionalidad|permiso de trabajo|residente|tarjeta azul|sin (necesidad de )?visado|no necesito)/.test(visa)) return "authorized";
+  if (/(need|require|sponsor|necesit|patrocin|visado)/.test(visa)) return "needs_sponsorship";
   return "unknown";
 }
 

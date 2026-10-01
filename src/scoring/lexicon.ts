@@ -98,6 +98,14 @@ export const SKILL_TERMS: Record<string, string[]> = {
   IDoc: ["idoc", "idocs"],
   "SAP PI/PO": ["sap pi", "sap po", "pi/po", "process integration"],
   CPI: ["cpi", "cloud platform integration", "integration suite"],
+  PPF: ["ppf", "post processing framework"],
+  "RF Framework": ["rf framework", "transacciones rf", "rf transactions", "radio frequency"],
+  qRFC: ["qrfc", "colas qrfc", "queued rfc"],
+  ALV: ["alv"],
+  Smartforms: ["smartforms", "smart forms"],
+  "Adobe Forms": ["adobe forms"],
+  "SAP Gateway": ["sap gateway", "gateway"],
+  "SAP TM": ["sap tm", "transportation management"],
   // practices
   Agile: ["agile"],
   Scrum: ["scrum"],
@@ -124,12 +132,12 @@ export const CERTIFICATION_TERMS: Record<string, string[]> = {
 };
 
 export const DOMAIN_TERMS: Record<string, string[]> = {
-  Fintech: ["fintech", "payments", "banking", "bank", "financial services", "finance", "trading"],
-  Insurance: ["insurance", "insurtech"],
-  Healthcare: ["healthcare", "medical", "clinical", "pharma", "biotech"],
-  Logistics: ["logistics", "supply chain", "warehouse", "warehousing", "transportation", "shipping", "intralogistics"],
-  Retail: ["retail", "e-commerce", "ecommerce", "marketplace"],
-  Manufacturing: ["manufacturing", "industrial", "industry 4.0"],
+  Fintech: ["fintech", "payments", "banking", "bank", "financial services", "finance", "trading", "banca", "pagos", "finanzas"],
+  Insurance: ["insurance", "insurtech", "seguros"],
+  Healthcare: ["healthcare", "medical", "clinical", "pharma", "biotech", "sanidad", "farmacéutica"],
+  Logistics: ["logistics", "supply chain", "warehouse", "warehousing", "transportation", "shipping", "intralogistics", "logística", "logistica", "almacén", "almacenes", "cadena de suministro", "distribución", "lagerlogistik", "logistik"],
+  Retail: ["retail", "e-commerce", "ecommerce", "marketplace", "comercio electrónico", "gran consumo"],
+  Manufacturing: ["manufacturing", "industrial", "industry 4.0", "fabricación", "producción industrial"],
   Automotive: ["automotive"],
   Energy: ["energy", "utilities", "oil and gas"],
   Telecom: ["telecom", "telecommunications"],

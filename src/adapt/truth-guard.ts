@@ -24,9 +24,19 @@ export const TEMPLATE_PREFIXES: Record<string, string> = {
   it: "Rilevante per questo ruolo:",
 };
 
-const TEMPLATE_WORDS = new Set(
-  Object.values(TEMPLATE_PREFIXES).flatMap((prefix) => tokens(prefix)),
-);
+/** Prefix for a skills line listing terms from the candidate's other source CVs. */
+export const SKILL_TEMPLATE_PREFIXES: Record<string, string> = {
+  en: "Also:",
+  es: "También:",
+  de: "Außerdem:",
+  fr: "Également :",
+  pt: "Também:",
+  it: "Inoltre:",
+};
+
+const ALL_PREFIXES = [...Object.values(TEMPLATE_PREFIXES), ...Object.values(SKILL_TEMPLATE_PREFIXES)];
+
+const TEMPLATE_WORDS = new Set(ALL_PREFIXES.flatMap((prefix) => tokens(prefix)));
 
 export function tokens(text: string): string[] {
   return (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}+#./%'’-]*/gu) ?? [])
@@ -40,7 +50,7 @@ function normalizeLine(line: string): string {
 
 export function isTemplateLine(line: string): boolean {
   const clean = normalizeLine(line);
-  return Object.values(TEMPLATE_PREFIXES).some((prefix) => clean.startsWith(prefix));
+  return ALL_PREFIXES.some((prefix) => clean.startsWith(prefix));
 }
 
 const SEPARATOR = /[,;|·]/;
@@ -66,7 +76,16 @@ export interface GuardInput {
  * `lineCheck: false` is used for HumanWorker takeover edits: rewording is
  * allowed, new facts (tokens) are not.
  */
-export function checkTruth(patches: GuardInput[], masterCv: string, factsText: string, options: { lineCheck?: boolean } = {}): void {
+export function checkTruth(
+  patches: GuardInput[],
+  masterCv: string,
+  factsText: string,
+  options: {
+    lineCheck?: boolean;
+    /** Per-section allowed lines: a role keeps only its own bullets (no moving achievements between employers). */
+    sectionLines?: Record<string, string[]>;
+  } = {},
+): void {
   const lineCheck = options.lineCheck !== false;
   const allowed = new Set([...tokens(masterCv), ...tokens(factsText)]);
   const masterLines = new Set(masterCv.split("\n").map(normalizeLine).filter(Boolean));
@@ -87,7 +106,7 @@ export function checkTruth(patches: GuardInput[], masterCv: string, factsText: s
       if (!clean) continue;
       if (isTemplateLine(line)) {
         // Template lines list CV terms only: each item verbatim in the master CV, no counts or durations.
-        const prefix = Object.values(TEMPLATE_PREFIXES).find((p) => clean.startsWith(p))!;
+        const prefix = ALL_PREFIXES.find((p) => clean.startsWith(p))!;
         const items = clean.slice(prefix.length).replace(/\.$/, "").split(",").map((item) => item.trim()).filter(Boolean);
         for (const item of items) {
           if (/^\d/.test(item) || /\b(years?|yrs|años|jahre|ans)\b/i.test(item) || !masterCv.toLowerCase().includes(item.toLowerCase())) {
@@ -98,6 +117,11 @@ export function checkTruth(patches: GuardInput[], masterCv: string, factsText: s
       }
       if (!masterLines.has(clean) && !masterItemSets.has(itemSetKey(clean)) && !masterSentenceSets.has(sentenceSetKey(clean))) {
         violations.push({ section_id: patch.section_id, line: clean, reason: `line "${clean.slice(0, 80)}" does not exist in the master CV` });
+        continue;
+      }
+      const own = options.sectionLines?.[patch.section_id];
+      if (own && !own.map(normalizeLine).includes(clean)) {
+        violations.push({ section_id: patch.section_id, line: clean, reason: `line "${clean.slice(0, 80)}" belongs to a different role` });
       }
     }
   }

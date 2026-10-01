@@ -211,3 +211,19 @@ modify it.
   drafting provider can be added later behind an interface, recorded through
   `model_ref`/`prompt_ref` refs, and gated by the same Policy.
 * No SMTP, no ATS automation.
+
+## Three source CVs, evaluation, and one-click send
+
+* The human gives up to three of their own CVs. Each is scored (`source_cv_scores`),
+  adapted, and re-scored (`cv_evaluation`) against the 50% target.
+* Adaptation may add lines from the other source CVs only when they are verbatim, in
+  the same language, and (for experience bullets) under the same role (same dates and
+  employer). The truth guard checks the union of the source CVs plus per-role lines.
+* Adapted files are renamed `CV_<Name>_<Company>_<Title>[_<source>].md`.
+* The application form is pre-filled from candidate facts, the CV header, and the
+  posting; unknown fields stay empty and are listed as missing.
+* "Aprobar y enviar" is one human click that records a Review (approve) on the CV
+  Request and on the email Request. The send runs only inside the email
+  ApprovalScope (`max_uses: 1`). The Node host sends through SMTP when `A2I_SMTP_URL`
+  and `A2I_SMTP_FROM` are set and records an `email_sent_receipt`; otherwise, and in
+  the browser edition, it hands the approved draft to the human.

@@ -1,78 +1,54 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="host-auth" content="__HOST_AUTH_TOKEN__">
   <title>Apply2Interview</title>
   <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="top">
-    <div>
-      <h1>Apply2Interview</h1>
-      <p class="tagline">One job link in. One governed WorkSession out.</p>
-    </div>
-    <p class="host-note">Host implementing the <a href="https://flow-research.github.io/jarvis/" target="_blank" rel="noreferrer">Jarvis</a> v0.1 protocol</p>
-  </header>
-
-  <div class="layout">
-    <aside class="side">
-      <form id="new-session" class="card">
-        <h2>New WorkSession</h2>
-        <label>Job link <span class="req">required</span>
-          <input name="job_url" type="url" placeholder="https://company.com/jobs/123" required>
-        </label>
-        <label>Master CV <span class="hint">plain text or Markdown</span>
-          <textarea name="master_cv" rows="8" placeholder="Paste your CV, or load a .txt / .md file"></textarea>
-        </label>
-        <input type="file" id="cv-file" accept=".txt,.md,text/plain,text/markdown">
-        <fieldset>
-          <legend>Candidate facts <span class="hint">optional, treated as truth</span></legend>
-          <input name="name" placeholder="Name">
-          <input name="location" placeholder="Location, e.g. Valencia, Spain">
-          <input name="visa" placeholder="Work authorization, e.g. EU citizen / needs sponsorship">
-          <input name="languages" placeholder="Languages, comma separated">
-          <label class="inline"><input type="checkbox" name="relocate"> Willing to relocate</label>
-        </fieldset>
-        <button type="button" id="load-example" hidden>Fill in the example</button>
-        <button type="submit" class="primary">Prepare the best honest application</button>
-        <p class="hint">Policy: the agent may fetch a public JD, score, propose CV section edits and draft an email. It may not send email, submit an application, or overwrite your master CV.</p>
-      </form>
-
-      <section class="card">
-        <h2>WorkSessions</h2>
+  <div class="shell">
+    <aside class="side" id="side">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <div class="brand-name">Apply2Interview</div>
+          <div class="brand-sub">host · protocolo Jarvis v0.1</div>
+        </div>
+      </div>
+      <nav class="menu" id="menu" aria-label="Menú">
+        <button data-page="inicio" class="on"><span class="k">01</span>Inicio</button>
+        <button data-page="oferta"><span class="k">02</span>Oferta completa</button>
+        <button data-page="cvs"><span class="k">03</span>CVs adaptados</button>
+        <button data-page="evaluacion"><span class="k">04</span>Evaluación</button>
+        <button data-page="envio"><span class="k">05</span>Formulario y envío</button>
+        <button data-page="jarvis"><span class="k">06</span>Jarvis WorkSession</button>
+      </nav>
+      <div class="side-block">
+        <div class="eyebrow">Postulaciones</div>
         <ul id="sessions" class="sessions"></ul>
-      </section>
-
-      <section class="card">
-        <h2>Confirmed memory</h2>
+      </div>
+      <div class="side-block">
+        <div class="eyebrow">Memoria confirmada</div>
         <ul id="memory" class="memory"></ul>
-      </section>
+      </div>
     </aside>
 
-    <main id="main-col" class="main">
-      <p id="browser-note" class="card note" hidden>Browser edition. Your WorkSessions are stored in this browser only. Except for the bundled example, job pages can't be fetched from here, so the agent will ask you to paste the job description. Example data is marked as an example.</p>
-      <section id="viewer" class="card" hidden>
-        <div class="row" style="justify-content:space-between"><h2>File</h2><div class="row"><button data-copy>Copy</button><button data-close>Close</button></div></div>
+    <main class="main" id="main-col">
+      <header class="status" id="status"></header>
+      <p id="browser-note" class="note" hidden>Edición navegador: tus postulaciones se guardan solo en este navegador. Desde aquí no se pueden leer páginas de empleo (salvo el ejemplo incluido) ni enviar emails; pega el texto de la oferta y usa “Copiar” o tu app de correo.</p>
+      <section id="viewer" class="panel" hidden>
+        <div class="row between"><h2 id="viewer-title">Archivo</h2><div class="row"><button data-copy class="btn">Copiar</button><button data-close class="btn ghost">Cerrar</button></div></div>
         <pre></pre>
       </section>
-      <div id="main">
-      <div class="empty card">
-        <h2>How it works</h2>
-        <ol>
-          <li>You paste a job link. A WorkSession starts under your Policy.</li>
-          <li>The agent fetches the public JD, scores fit against your master CV, proposes section edits, and drafts an email.</li>
-          <li>Anything outside Policy becomes a Request: you approve, deny, narrow, answer, correct, or take over.</li>
-          <li>Every step is a hash-chained Jarvis event with evidence. Export the pack when you finish.</li>
-        </ol>
-      </div>
-      </div>
+      <div id="main"></div>
     </main>
   </div>
-
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" hidden role="status"></div>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

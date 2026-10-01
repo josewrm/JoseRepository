@@ -22,11 +22,15 @@ protocol. Jarvis is the protocol (`../jarvis`, read-only). This repo is not Jarv
 - Every AgentWorker mutation is bound to a PolicyDecision recorded before it.
 - Never invent JD facts, CV facts, or interview outcomes. Login wall or empty
   page → Request.
-- Fit score and `apply_to_interview_pct` are computed from the master CV plus
-  candidate facts, never from the adapted CV, and never by a model.
-- `cvs_best_version` is a section patch. The truth guard hard-fails new facts.
-- Email is draft-only. Sending is a Request; the host never sends mail and never
-  auto-submits to Workday, LinkedIn, or any ATS.
+- Fit score and `apply_to_interview_pct` are computed, never by a model. "Before" uses
+  each source CV; "after" uses the adapted CV, which may only contain lines from the
+  candidate's own source CVs (truth guard), so no score comes from invention.
+- `cvs_best_version` is a section patch. Lines from another source CV stay under the
+  same role and in the same language. The truth guard hard-fails new facts.
+- One click ("Aprobar y enviar") records one HumanWorker Review per open Request; the
+  host sends only inside the approved email ApprovalScope (SMTP via env, else handoff).
+- Sending is a Request. Nothing is sent without the human's click; never auto-submit
+  to Workday, LinkedIn, or any ATS (forms are pre-filled for the human to paste).
 - No credentials, auth tokens, or host-only ids in exports.
 
 ## Checks before every push

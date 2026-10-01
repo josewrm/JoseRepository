@@ -4,6 +4,7 @@ import { openDatabase } from "../store/db.ts";
 import { RecordStore } from "../store/record-store.ts";
 import { Apply2InterviewService } from "../app/service.ts";
 import { createAppServer } from "./http.ts";
+import { smtpMailerFromEnv } from "./mailer.ts";
 import { validatePack } from "../../scripts/validate-export.ts";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -14,7 +15,8 @@ const dbPath = process.env.A2I_DB ?? resolve(root, "data/apply2interview.sqlite"
 
 const db = openDatabase(dbPath);
 const store = new RecordStore(db, { authorize: (auth) => auth === `HostAuth ${token}` });
-const service = new Apply2InterviewService(store, { authorization: `HostAuth ${token}` });
+const mailer = smtpMailerFromEnv();
+const service = new Apply2InterviewService(store, { authorization: `HostAuth ${token}`, mailer });
 service.ensureParticipants();
 
 const server = createAppServer({
@@ -34,4 +36,5 @@ const server = createAppServer({
 server.listen(port, host, () => {
   console.log(`Apply2Interview host on http://${host}:${port}`);
   console.log(`Records: ${dbPath}`);
+  console.log(mailer ? "Email: SMTP transport configured (sends only after your approval)." : "Email: no SMTP configured; approved drafts are handed to you to send.");
 });

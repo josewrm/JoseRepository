@@ -30,6 +30,7 @@ const inline = (code: string) => code.replace(/<\/script/gi, "<\\/script");
 
 const page = `<title>Apply2Interview</title>
 <meta name="host-auth" content="browser-local">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 ${read("public/styles.css")}
 </style>

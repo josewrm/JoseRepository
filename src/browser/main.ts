@@ -10,13 +10,29 @@ import { buildEvidencePack } from "../export/evidence-pack.ts";
 import { validatePackFiles } from "../export/validate-pack.ts";
 import { handleApi, type RouteDeps } from "../server/routes.ts";
 // Bundled as text by the build (esbuild text loader).
-import exampleJdHtml from "../../test/fixtures/jd-public.html";
-import exampleCv from "../../test/fixtures/fake-cv.md";
+import exampleJdHtml from "../../test/fixtures/ejemplo/oferta-ewm.html";
+import cvGeneral from "../../test/fixtures/ejemplo/cv-general-es.md";
+import cvEwm from "../../test/fixtures/ejemplo/cv-ewm-es.md";
+import cvEnglish from "../../test/fixtures/ejemplo/cv-english.md";
 
-const STORAGE_KEY = "apply2interview.records.v1";
+const STORAGE_KEY = "apply2interview.records.v2";
 const AUTH = "HostAuth browser-local";
-const EXAMPLE_URL = "https://jobs.example.test/northwind/senior-backend-engineer";
-const EXAMPLE_FACTS = { name: "Alex Example", location: "Valencia, Spain", visa: "EU citizen", languages: ["Spanish", "English"] };
+const EXAMPLE_URL = "https://empleo.example.test/logistica-norte/desarrollador-sap-ewm";
+const EXAMPLE_SOURCES = [
+  { label: "General", text: cvGeneral },
+  { label: "EWM", text: cvEwm },
+  { label: "English", text: cvEnglish },
+];
+const EXAMPLE_FACTS = {
+  name: "Lucía Ejemplo",
+  email: "lucia.ejemplo@example.test",
+  phone: "+34 600 000 000",
+  location: "Valencia, España",
+  visa: "Ciudadana UE",
+  languages: ["Español", "Inglés"],
+  availability: "Un mes",
+  willing_to_relocate: true,
+};
 
 function load(): MemoryDatabase {
   try {
@@ -45,7 +61,7 @@ const fetchImpl = (async (input: string | URL | Request) => {
     Object.defineProperty(response, "url", { value: url });
     return response;
   }
-  throw new Error("the browser edition cannot read job pages directly (no server). Paste the job description text to continue");
+  throw new Error("la edición navegador no puede leer páginas de empleo (no hay servidor). Pega el texto de la oferta para continuar");
 }) as typeof fetch;
 
 const store = new RecordStore(db, { authorize: (auth) => auth === AUTH });
@@ -63,7 +79,7 @@ async function seed(): Promise<void> {
   service.ensureParticipants();
   if (store.listWorkSessions().length) return;
   // First visit: one example WorkSession so the page opens in a working state.
-  await service.startSession({ job_url: EXAMPLE_URL, master_cv: exampleCv, candidate_facts: EXAMPLE_FACTS });
+  await service.startSession({ job_url: EXAMPLE_URL, source_cvs: EXAMPLE_SOURCES, candidate_facts: EXAMPLE_FACTS });
   save();
 }
 
@@ -86,7 +102,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 (window as any).A2I_BROWSER = {
   exampleUrl: EXAMPLE_URL,
-  exampleCv,
+  exampleSources: EXAMPLE_SOURCES,
   exampleFacts: EXAMPLE_FACTS,
   reset: () => {
     try {

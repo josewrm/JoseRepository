@@ -16,6 +16,7 @@ import { parseCv, sectionText, type ParsedCv } from "../scoring/cv.ts";
 import { detectLanguage } from "../adapters/html.ts";
 import { scoreFit, type CandidateFacts, type ScoreSheet } from "../scoring/score.ts";
 import { applyPatch, buildCvPatch, type CvPatch } from "../adapt/section-adapter.ts";
+import { cvFilename, fillApplicationForm, normalizeSources, type SourceCvInput } from "./application-package.ts";
 import { TruthGuardError, checkTruth } from "../adapt/truth-guard.ts";
 import { assertNoScore, draftEmail, nameFromCvHeader, type EmailDraft } from "../email/drafter.ts";
 import {
@@ -40,10 +41,26 @@ export class UserError extends Error {
 }
 
 export interface StartInput {
-  job_url: string;
+  job_url?: string;
+  /** Job description text the human already has (skips fetching). */
+  jd_text?: string | null;
   master_cv?: string | null;
+  /** Up to three of the candidate's own CVs. */
+  source_cvs?: { label?: string; text: string }[];
   candidate_facts?: CandidateFacts;
 }
+
+export interface OutgoingEmail {
+  to: string;
+  subject: string;
+  body: string;
+  attachments: { filename: string; content: string }[];
+}
+
+/** Host-owned mail transport. Called only after a HumanWorker Review approved the exact draft. */
+export type Mailer = (message: OutgoingEmail) => Promise<{ id: string }>;
+
+export const TARGET_PCT = 50;
 
 export interface ReviewInput {
   decision: "approve" | "narrow" | "deny" | "answer" | "needs_revision" | "correct" | "takeover";
@@ -56,6 +73,10 @@ export interface ReviewInput {
   email?: { subject: string; body: string };
   /** accept_cv_version takeover: human-edited section text by section id. */
   edited_sections?: Record<string, string>;
+  /** accept_cv_version: pick another adapted version than the recommended one. */
+  version_ref?: string;
+  /** send_application_email approve: recipient confirmed by the human. */
+  to?: string;
 }
 
 interface HostState {
@@ -70,6 +91,17 @@ interface HostState {
   learning_proposed?: boolean;
   limitations?: string[];
   pd_by_action?: Record<string, string>;
+  best_label?: string;
+  best_patch_ref?: string;
+  evaluation_ref?: string;
+  source_scores_ref?: string;
+  patch_files?: Record<string, string>;
+  email_receipt_ref?: string;
+}
+
+interface ParsedSource extends SourceCvInput {
+  cv: ParsedCv;
+  hash: string;
 }
 
 const short = (hash: string) => hash.replace(/^hash:/, "").slice(0, 12);
@@ -78,6 +110,7 @@ const newId = (prefix: string) => `${prefix}-${randomUUID().slice(0, 8)}`;
 export interface ServiceOptions {
   authorization: string;
   fetchImpl?: typeof fetch;
+  mailer?: Mailer;
 }
 
 /**
@@ -88,11 +121,13 @@ export class Apply2InterviewService {
   store: RecordStore;
   authorization: string;
   fetchImpl?: typeof fetch;
+  mailer?: Mailer;
 
   constructor(store: RecordStore, options: ServiceOptions) {
     this.store = store;
     this.authorization = options.authorization;
     this.fetchImpl = options.fetchImpl;
+    this.mailer = options.mailer;
   }
 
   // ------------------------------------------------------------ headers
@@ -354,12 +389,19 @@ export class Apply2InterviewService {
   // ------------------------------------------------------------- start
 
   async startSession(input: StartInput): Promise<string> {
-    const checked = validateJobUrl(input.job_url ?? "");
-    if (!checked.ok) throw new UserError(checked.detail);
+    const jdText = input.jd_text?.trim() ?? "";
+    let jobUrl = "";
+    if (input.job_url?.trim()) {
+      const checked = validateJobUrl(input.job_url);
+      if (!checked.ok) throw new UserError(checked.detail);
+      jobUrl = checked.url.href;
+    } else if (jdText.length < 200) {
+      throw new UserError("Pega el enlace de la oferta o el texto completo de la oferta (mínimo 200 caracteres).");
+    }
     this.ensureParticipants();
     const wsId = `ws-${randomUUID().slice(0, 12)}`;
     const facts = normalizeFacts((input.candidate_facts ?? {}) as Record<string, unknown>);
-    const masterCv = input.master_cv?.trim() ? input.master_cv.replace(/\r\n/g, "\n") : null;
+    const sources = normalizeSources(input.source_cvs, input.master_cv);
     const created = this.store.createWorkSession(this.wsHeaders(HUMAN_ACTOR_ID, null), {
       id: wsId,
       created_by_actor_id: HUMAN_ACTOR_ID,
@@ -367,18 +409,48 @@ export class Apply2InterviewService {
       human_worker_id: HUMAN_WORKER_ID,
       agent_worker_id: AGENT_WORKER_ID,
       policy_id: POLICY_ID,
-      source_ref: `job-url:${short(contentHash(checked.url.href))}`,
+      source_ref: jobUrl ? `job-url:${short(contentHash(jobUrl))}` : `jd-text:${short(contentHash(jdText))}`,
     });
-    this.store.saveHostSession(wsId, { jobUrl: checked.url.href, masterCv, facts });
+    this.store.saveHostSession(wsId, { jobUrl, masterCv: sources.length ? JSON.stringify({ sources }) : null, facts });
+    for (const source of sources) this.store.putArtifact(wsId, this.masterCvRef(source.text), "cv-source", { label: source.label, text: source.text });
     this.contribute(wsId, "human", "intent", {
       events: [created.event!.id],
-      artifacts: masterCv ? [this.masterCvRef(masterCv)] : [],
-      limitations: masterCv ? [] : ["limitation:no-master-cv"],
+      artifacts: sources.map((source) => this.masterCvRef(source.text)),
+      limitations: sources.length ? [] : ["limitation:no-master-cv"],
     });
-    if (masterCv) this.store.putArtifact(wsId, this.masterCvRef(masterCv), "cv-master", { text: masterCv });
-    else this.addLimitation(wsId, "limitation:no-master-cv");
+    if (!sources.length) this.addLimitation(wsId, "limitation:no-master-cv");
+    if (jdText.length >= 200) {
+      // The human brought the job description: it is their contribution, not a fetch.
+      const evidence = this.capture(wsId, { actorId: HUMAN_ACTOR_ID }, {
+        kind: "jd-snapshot",
+        refSuffix: "human",
+        evidenceType: "jd_snapshot",
+        content: snapshotFromHumanText(jdText, jobUrl, this.store.nowIso()),
+        trustLabel: "human_supplied",
+        summary: "HumanWorker supplied the full job description text.",
+      });
+      this.setState(wsId, { snapshot_ref: evidence.artifactRef });
+    }
     await this.runAgent(wsId);
     return wsId;
+  }
+
+  private sources(wsId: string): ParsedSource[] {
+    const raw = this.session(wsId).host.masterCv;
+    if (!raw) return [];
+    let list: SourceCvInput[];
+    try {
+      const parsed = JSON.parse(raw);
+      list = Array.isArray(parsed?.sources) ? parsed.sources : [{ label: "CV 1", text: raw }];
+    } catch {
+      list = [{ label: "CV 1", text: raw }];
+    }
+    return list.map((source) => ({ ...source, cv: parseCv(source.text, detectLanguage(source.text)), hash: contentHash(source.text) }));
+  }
+
+  private candidateName(facts: CandidateFacts, cv: ParsedCv | null): string | null {
+    const header = cv?.sections.find((s) => s.kind === "header");
+    return facts.name ?? (header ? nameFromCvHeader(header.lines) : null);
   }
 
   // -------------------------------------------------------- agent loop
@@ -475,98 +547,171 @@ export class Apply2InterviewService {
     });
   }
 
-  private loadInputs(wsId: string): { jd: StructuredJd; jdHash: string; cv: ParsedCv | null; cvHash: string | null; facts: CandidateFacts; masterCv: string | null } {
+  /** `cv` is the best-scoring source CV; `masterCv` is the union of all source CVs (the truth set). */
+  private loadInputs(wsId: string): { jd: StructuredJd; jdHash: string; cv: ParsedCv | null; cvHash: string | null; facts: CandidateFacts; masterCv: string | null; sources: ParsedSource[] } {
     const { host } = this.session(wsId);
     const state = this.state(wsId);
-    const jdArtifact = this.store.getArtifact(state.jd_ref!)!;
-    const jd = jdArtifact.content as StructuredJd;
-    const masterCv: string | null = host.masterCv;
-    const cv = masterCv ? parseCv(masterCv, detectLanguage(masterCv)) : null;
-    return { jd, jdHash: jd.source.snapshot_hash, cv, cvHash: masterCv ? contentHash(masterCv) : null, facts: host.facts, masterCv };
+    const jd = this.store.getArtifact(state.jd_ref!)!.content as StructuredJd;
+    const sources = this.sources(wsId);
+    const best = sources.find((s) => s.label === state.best_label) ?? sources[0] ?? null;
+    return {
+      jd,
+      jdHash: jd.source.snapshot_hash,
+      cv: best?.cv ?? null,
+      cvHash: best?.hash ?? null,
+      facts: host.facts,
+      masterCv: sources.length ? sources.map((s) => s.text).join("\n") : null,
+      sources,
+    };
   }
 
   private scoreIfPossible(wsId: string): void {
     const state = this.state(wsId);
     if (state.score_ref || !state.jd_ref) return;
-    const { jd, jdHash, cv, cvHash, facts } = this.loadInputs(wsId);
-    if (!cv) return;
+    const { jd, jdHash, facts, sources } = this.loadInputs(wsId);
+    if (!sources.length) return;
     const decision = this.decide(wsId, "score_fit", state.jd_ref);
-    const sheet = scoreFit(jd, cv, facts, { jdSnapshot: jdHash, masterCv: cvHash! }, this.store.clock());
+    const sheets = sources.map((source) => ({ source, sheet: scoreFit(jd, source.cv, facts, { jdSnapshot: jdHash, masterCv: source.hash }, this.store.clock()) }));
+    const rank = (x: { sheet: ScoreSheet }) => x.sheet.apply_to_interview_pct.value * 1000 + x.sheet.fit_score.value;
+    const best = [...sheets].sort((a, b) => rank(b) - rank(a))[0];
+    this.setState(wsId, { best_label: best.source.label });
+    const sheet = best.sheet;
     const captured = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
       kind: "score-sheet",
       evidenceType: "score_sheet",
       content: sheet,
       trustLabel: "computed_heuristic_v1",
       limitations: sheet.unverified.length ? ["limitation:unverified-requirements"] : [],
-      summary: `Fit ${sheet.fit_score.value}/100; apply_to_interview_pct ${sheet.apply_to_interview_pct.value} (${sheet.apply_to_interview_pct.band}, heuristic_v1).`,
+      summary: `Best source CV "${best.source.label}": fit ${sheet.fit_score.value}/100; apply_to_interview_pct ${sheet.apply_to_interview_pct.value} (${sheet.apply_to_interview_pct.band}, heuristic_v1).`,
+    });
+    const scores = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+      kind: "cv-source-scores",
+      evidenceType: "source_cv_scores",
+      content: {
+        schema: "apply2interview.source_scores.v1",
+        best_label: best.source.label,
+        sources: sheets.map(({ source, sheet: s }) => ({ label: source.label, content_hash: source.hash, fit: s.fit_score.value, pct: s.apply_to_interview_pct.value, band: s.apply_to_interview_pct.band })),
+      },
+      trustLabel: "computed_heuristic_v1",
+      summary: `Scored ${sheets.length} source CV(s); best is "${best.source.label}".`,
     });
     if (sheet.unverified.length) this.addLimitation(wsId, "limitation:unverified-requirements");
-    this.contribute(wsId, "agent", "artifact", { events: [captured.eventId], artifacts: [captured.artifactRef], evidence: [captured.evidenceId] }, decision);
-    this.setState(wsId, { score_ref: captured.artifactRef });
+    this.contribute(wsId, "agent", "artifact", { events: [captured.eventId, scores.eventId], artifacts: [captured.artifactRef, scores.artifactRef], evidence: [captured.evidenceId, scores.evidenceId] }, decision);
+    this.setState(wsId, { score_ref: captured.artifactRef, source_scores_ref: scores.artifactRef });
   }
 
   private proposeCvIfPossible(wsId: string, dropSectionIds: string[] = [], derivedFrom: CvPatch | null = null): void {
     const state = this.state(wsId);
     if (!state.score_ref || state.accepted_cv_ref) return;
     if (!derivedFrom && state.patch_refs?.length) return;
-    const { jd, jdHash, cv, cvHash, facts } = this.loadInputs(wsId);
-    if (!cv) return;
-    const score = this.store.getArtifact(state.score_ref)!.content as ScoreSheet;
-    const decision = this.decide(wsId, "propose_cv_section_edits", this.masterCvRef(cv.text));
-    let patch: CvPatch;
-    try {
-      patch = buildCvPatch(cv, jd, score, {
-        version: (state.patch_refs?.length ?? 0) + 1,
-        derivedFromVersion: derivedFrom?.version ?? null,
-        dropSectionIds: [...(derivedFrom?.dropped_section_ids ?? []), ...dropSectionIds],
-        factsText: factsText(facts),
-        hashes: { masterCv: cvHash!, jdSnapshot: jdHash },
+    const { jd, jdHash, facts, sources } = this.loadInputs(wsId);
+    if (!sources.length) return;
+    const decision = this.decide(wsId, "propose_cv_section_edits", `cv-sources:${sources.map((s) => short(s.hash)).join("+")}`);
+    const targets = derivedFrom ? sources.filter((s) => s.label === derivedFrom.source_label) : sources;
+    const name = this.candidateName(facts, sources[0].cv);
+    const files: Record<string, string> = { ...(state.patch_files ?? {}) };
+    const results: { label: string; patchRef: string; patch: CvPatch; before: ScoreSheet; after: ScoreSheet; filename: string; evidenceId: string; eventId: string }[] = [];
+    for (const source of targets) {
+      const others = sources.filter((o) => o.label !== source.label).map((o) => ({ label: o.label, cv: o.cv }));
+      const before = scoreFit(jd, source.cv, facts, { jdSnapshot: jdHash, masterCv: source.hash }, this.store.clock());
+      const previous = (state.patch_refs ?? []).filter((ref) => (this.store.getArtifact(ref)?.content as CvPatch | undefined)?.source_label === source.label).length;
+      let patch: CvPatch;
+      try {
+        patch = buildCvPatch(source.cv, jd, before, {
+          version: previous + 1,
+          derivedFromVersion: derivedFrom?.version ?? null,
+          dropSectionIds: [...(derivedFrom?.dropped_section_ids ?? []), ...dropSectionIds],
+          factsText: factsText(facts),
+          hashes: { masterCv: source.hash, jdSnapshot: jdHash },
+          otherSources: others,
+          sourceLabel: source.label,
+        });
+      } catch (error) {
+        if (!(error instanceof TruthGuardError)) throw error;
+        this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+          kind: "cv-truth-guard-failure",
+          refSuffix: source.label,
+          evidenceType: "truth_guard_failure",
+          content: { source_label: source.label, violations: error.violations },
+          trustLabel: "observed",
+          limitations: ["limitation:cv-patch-rejected-by-truth-guard"],
+          summary: `Truth guard rejected the patch for "${source.label}"; no adapted CV from it.`,
+        });
+        this.addLimitation(wsId, "limitation:cv-patch-rejected-by-truth-guard");
+        continue;
+      }
+      const adapted = applyPatch(source.cv, patch, patch.sections.map((x) => x.section_id));
+      // Every adapted line is verbatim from the candidate's own CVs, so scoring it cannot reward invention.
+      const after = scoreFit(jd, parseCv(adapted, source.cv.language), facts, { jdSnapshot: jdHash, masterCv: source.hash }, this.store.clock());
+      const filename = cvFilename({ name, company: jd.company, title: jd.title, source: source.label });
+      const captured = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+        kind: "cv-patch",
+        refSuffix: `${source.label.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}-v${patch.version}`,
+        evidenceType: "cv_section_diff",
+        content: { ...patch, filename, score_before: before.apply_to_interview_pct.value, score_after: after.apply_to_interview_pct.value },
+        trustLabel: "agent_proposed",
+        summary: `"${source.label}" v${patch.version}: ${patch.sections.length} adapted sections; ${before.apply_to_interview_pct.value}% -> ${after.apply_to_interview_pct.value}% (heuristic_v1); truth guard passed.`,
       });
-    } catch (error) {
-      if (!(error instanceof TruthGuardError)) throw error;
-      const failure = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
-        kind: "cv-truth-guard-failure",
-        evidenceType: "truth_guard_failure",
-        content: { violations: error.violations },
-        trustLabel: "observed",
-        limitations: ["limitation:cv-patch-rejected-by-truth-guard"],
-        summary: "Truth guard rejected the CV patch; no adapted CV was produced.",
-      });
-      this.addLimitation(wsId, "limitation:cv-patch-rejected-by-truth-guard");
-      void failure;
-      return;
+      files[captured.artifactRef] = filename;
+      results.push({ label: source.label, patchRef: captured.artifactRef, patch, before, after, filename, evidenceId: captured.evidenceId, eventId: captured.eventId });
     }
-    const captured = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
-      kind: "cv-patch",
-      refSuffix: `v${patch.version}`,
-      evidenceType: "cv_section_diff",
-      content: patch,
-      trustLabel: "agent_proposed",
-      summary: `cvs_best_version v${patch.version}: ${patch.sections.length} adapted sections, ${patch.unchanged_section_ids.length} unchanged, truth guard passed.`,
+    if (!results.length) return;
+    const rank = (r: (typeof results)[number]) => r.after.apply_to_interview_pct.value * 1000 + r.after.fit_score.value;
+    const best = [...results].sort((a, b) => rank(b) - rank(a))[0];
+    const summarize = (s: ScoreSheet) => ({ fit: s.fit_score.value, pct: s.apply_to_interview_pct.value, band: s.apply_to_interview_pct.band });
+    const evaluation = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+      kind: "evaluation",
+      evidenceType: "cv_evaluation",
+      content: {
+        schema: "apply2interview.evaluation.v1",
+        target_pct: TARGET_PCT,
+        method: "heuristic_v1 on each source CV before and after adaptation. Adapted CVs only contain lines from the candidate's own CVs (truth guard), so the upgrade comes from relevance and from facts already in the other CVs.",
+        sources: results.map((r) => ({
+          label: r.label,
+          patch_ref: r.patchRef,
+          filename: r.filename,
+          before: summarize(r.before),
+          after: summarize(r.after),
+          upgrade_pts: r.after.apply_to_interview_pct.value - r.before.apply_to_interview_pct.value,
+          sources_used: [...new Set(r.patch.sections.flatMap((x) => x.sources_used))],
+        })),
+        best_label: best.label,
+        best_patch_ref: best.patchRef,
+        reached_target: best.after.apply_to_interview_pct.value >= TARGET_PCT,
+        hard_blockers: best.after.apply_to_interview_pct.inputs.hard_blockers,
+        missing_requirements: best.after.requirements.filter((r) => r.kind === "must" && r.status !== "met").map((r) => ({ text: r.text, status: r.status, basis: r.basis })),
+      },
+      trustLabel: "computed_heuristic_v1",
+      summary: `Best adapted CV "${best.label}": ${best.after.apply_to_interview_pct.value}% (target ${TARGET_PCT}%).`,
     });
-    this.contribute(wsId, "agent", "artifact", { events: [captured.eventId], artifacts: [captured.artifactRef], evidence: [captured.evidenceId] }, decision);
-    this.setState(wsId, { patch_refs: [...(state.patch_refs ?? []), captured.artifactRef] });
-    if (!patch.sections.length) {
+    this.contribute(wsId, "agent", "artifact", { events: [...results.map((r) => r.eventId), evaluation.eventId], artifacts: [...results.map((r) => r.patchRef), evaluation.artifactRef], evidence: [...results.map((r) => r.evidenceId), evaluation.evidenceId] }, decision);
+    this.setState(wsId, {
+      patch_refs: [...(state.patch_refs ?? []), ...results.map((r) => r.patchRef)],
+      patch_files: files,
+      best_patch_ref: best.patchRef,
+      evaluation_ref: evaluation.artifactRef,
+    });
+    if (!best.patch.sections.length) {
       this.addLimitation(wsId, "limitation:no-cv-section-changes");
       return;
     }
-    this.openRequest(wsId, "accept_cv_version", captured.artifactRef, {
+    this.openRequest(wsId, "accept_cv_version", best.patchRef, {
       type: "review",
       reason_code: "cv_version_choice",
-      reason_summary: `cvs_best_version v${patch.version} reorders ${patch.sections.map((s) => s.section_id).join(", ")} using only master CV lines. Choose the accepted version.`,
-      requested_outcome: "HumanWorker approves the version, keeps only some sections (narrow), asks for a revision, edits by hand (takeover), or keeps the master CV (deny).",
-      human_decision_needed: "Which adapted sections become part of the accepted CV?",
+      reason_summary: `Recomendado: "${best.label}" adaptado (${best.after.apply_to_interview_pct.value}%, antes ${best.before.apply_to_interview_pct.value}%). ${results.length} versiones adaptadas solo con líneas de tus CVs. Elige la versión aceptada.`,
+      requested_outcome: "HumanWorker approves the recommended version, picks another version or some sections (narrow), asks for a revision, edits by hand (takeover), or keeps the source CVs (deny).",
+      human_decision_needed: "¿Qué versión adaptada del CV se envía?",
       options: [
-        { id: "option-approve-all", label: "Accept all adapted sections", effect: "Accepted CV = master CV with every adapted section applied.", risk_class: "medium", scope_ref: "scope:cv-acceptance" },
-        { id: "option-narrow", label: "Accept selected sections", effect: "Only the selected sections change; the rest stay as in the master CV.", risk_class: "low", scope_ref: "scope:cv-acceptance" },
-        { id: "option-revise", label: "Drop sections and revise", effect: "The agent proposes a new version without the dropped sections; this version stays as a Contribution.", risk_class: "low", scope_ref: "scope:cv-proposal" },
-        { id: "option-takeover", label: "Edit sections myself", effect: "Human Takeover of the CV acceptance scope; edits pass the truth guard.", risk_class: "medium", scope_ref: "scope:cv-acceptance" },
-        { id: "option-keep-master", label: "Keep the master CV", effect: "No adapted section is used.", risk_class: "low", scope_ref: "scope:master-cv" },
+        { id: "option-approve-best", label: "Aceptar la versión recomendada", effect: `Se usa ${best.filename}.`, risk_class: "medium", scope_ref: "scope:cv-acceptance" },
+        { id: "option-other-version", label: "Elegir otra versión o secciones", effect: "Solo cambia lo que elijas; el resto queda como en tu CV.", risk_class: "low", scope_ref: "scope:cv-acceptance" },
+        { id: "option-revise", label: "Quitar secciones y revisar", effect: "El agente propone una nueva versión; esta queda como Contribution.", risk_class: "low", scope_ref: "scope:cv-proposal" },
+        { id: "option-takeover", label: "Editar yo mismo", effect: "Takeover humano; las ediciones pasan el truth guard.", risk_class: "medium", scope_ref: "scope:cv-acceptance" },
+        { id: "option-keep-source", label: "Mantener mi CV original", effect: "No se usa ninguna sección adaptada.", risk_class: "low", scope_ref: "scope:master-cv" },
       ],
-      recommended_option: "option-approve-all",
-      default_if_no_response: { action: "keep_master_cv", reason: "The master CV stays unchanged and the patch stays a proposal.", limitation_ref: "limitation:cv-version-not-reviewed" },
-      evidence_refs: [captured.evidenceId],
-      artifact_refs: [captured.artifactRef],
+      recommended_option: "option-approve-best",
+      default_if_no_response: { action: "keep_master_cv", reason: "Tus CVs originales no cambian y las versiones adaptadas siguen siendo propuestas.", limitation_ref: "limitation:cv-version-not-reviewed" },
+      evidence_refs: [...results.map((r) => r.evidenceId), evaluation.evidenceId],
+      artifact_refs: results.map((r) => r.patchRef),
     });
   }
 
@@ -657,6 +802,10 @@ export class Apply2InterviewService {
       created_at: this.store.nowIso(),
     };
     if (input.comments?.trim()) review.comments = input.comments.trim().slice(0, 2000);
+    if (action === "send_application_email" && input.decision === "approve" && input.to?.trim()) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.to.trim())) throw new UserError("El destinatario no es un email válido.");
+      review.comments = `${review.comments ? `${review.comments} ` : ""}Destinatario confirmado por la persona: ${input.to.trim()}.`;
+    }
 
     let humanJdRef: string | null = null;
     if (action === "use_human_supplied_jd" && input.decision === "answer") {
@@ -678,11 +827,19 @@ export class Apply2InterviewService {
       review.takeover_id = takeover.id;
     }
 
+    if (action === "accept_cv_version" && input.version_ref && input.version_ref !== request.requested_action.target_ref) {
+      if (!(this.state(wsId).patch_refs ?? []).includes(input.version_ref)) throw new UserError("Versión de CV desconocida.");
+      // Choosing another version than the recommended one narrows the approval to that version.
+      if (input.decision === "approve") input = { ...input, decision: "narrow" };
+      review.decision = input.decision;
+    }
     if (["approve", "narrow"].includes(input.decision)) {
       const requestEvent = this.store.findEventFor(wsId, "request.created", requestId)!;
       const decision = this.store.getRecord("PolicyDecision", request.policy_decision_id)!;
       const sections = input.decision === "narrow" ? (input.section_ids ?? []) : [];
-      if (input.decision === "narrow" && !sections.length) throw new UserError("Narrow needs at least one section to accept.");
+      const versionRef = input.decision === "narrow" && input.version_ref ? input.version_ref : null;
+      if (input.decision === "narrow" && !sections.length && !versionRef) throw new UserError("Elige al menos una sección o una versión.");
+      const constraints = [...(versionRef ? [`cv_version:${versionRef}`] : []), ...sections.map((id) => `section:${id}`)];
       review.approval_scope = {
         request_id: requestId,
         review_id: reviewId,
@@ -694,9 +851,9 @@ export class Apply2InterviewService {
         allowed_scope: {
           scope_ref: request.requested_action.scope_ref,
           grant_refs: [`grant:${action}:approved-once`],
-          ...(sections.length ? { constraint_refs: sections.map((id) => `section:${id}`) } : {}),
+          ...(constraints.length ? { constraint_refs: constraints } : {}),
         },
-        denied_scope: { scope_ref: sections.length ? "scope:cv-sections-not-accepted" : "scope:any-other-action" },
+        denied_scope: { scope_ref: constraints.length ? "scope:cv-sections-not-accepted" : "scope:any-other-action" },
         expires_at: new Date(this.store.clock().getTime() + DAY_MS).toISOString().replace(/\.\d{3}Z$/, "Z"),
         max_uses: 1,
         applies_to_work_session_id: wsId,
@@ -734,16 +891,7 @@ export class Apply2InterviewService {
         break;
       case "send_application_email":
         if (input.decision === "approve") {
-          const decision = this.decide(wsId, "send_application_email", request.requested_action.target_ref, { approvalReviewId: reviewId });
-          const email = this.store.getArtifact(request.requested_action.target_ref)!.content as EmailDraft;
-          const handoff = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
-            kind: "email-handoff",
-            evidenceType: "email_send_handoff",
-            content: { approved_draft_ref: request.requested_action.target_ref, review_id: reviewId, to: email.to, subject: email.subject, body: email.body, delivery: "human_sends_manually", sent_by_host: false },
-            trustLabel: "human_reviewed",
-            summary: "Approved draft handed to the HumanWorker for sending. The host does not send email.",
-          });
-          this.setState(wsId, { email_handoff_ref: handoff.artifactRef });
+          await this.sendApproved(wsId, request, reviewId, input.to?.trim() || null);
         } else if (input.decision === "correct") {
           if (!input.email?.body?.trim() || !input.email?.subject?.trim()) throw new UserError("Correct needs the edited subject and body.");
           this.draftEmailIfNeeded(wsId, { subject: input.email.subject.trim(), body: input.email.body.trim() });
@@ -760,12 +908,16 @@ export class Apply2InterviewService {
   }
 
   private async afterCvReview(wsId: string, request: ProtocolRecord, review: ProtocolRecord, input: ReviewInput, takeover: ProtocolRecord | null): Promise<void> {
-    const patchRef: string = request.requested_action.target_ref;
+    const patchRef: string = input.version_ref && input.decision !== "approve" ? input.version_ref : request.requested_action.target_ref;
     const patch = this.store.getArtifact(patchRef)!.content as CvPatch;
-    const { cv, facts, masterCv } = this.loadInputs(wsId);
+    const { jd, jdHash, facts, masterCv, sources } = this.loadInputs(wsId);
+    const source = sources.find((s) => s.label === patch.source_label) ?? sources[0];
+    const cv = source.cv;
     if (input.decision === "approve" || input.decision === "narrow") {
-      const accepted = input.decision === "narrow" ? patch.sections.map((s) => s.section_id).filter((id) => input.section_ids!.includes(id)) : patch.sections.map((s) => s.section_id);
-      const decision = this.decide(wsId, "accept_cv_version", patchRef, { approvalReviewId: review.id });
+      const picked = input.section_ids?.length ? input.section_ids : null;
+      const accepted = picked ? patch.sections.map((s) => s.section_id).filter((id) => picked.includes(id)) : patch.sections.map((s) => s.section_id);
+      // The approved action is the Request's; the chosen version is a constraint inside its ApprovalScope.
+      const decision = this.decide(wsId, "accept_cv_version", request.requested_action.target_ref, { approvalReviewId: review.id });
       const content = {
         schema: "apply2interview.accepted_cv.v1",
         patch_ref: patchRef,
@@ -774,8 +926,12 @@ export class Apply2InterviewService {
         accepted_section_ids: accepted,
         rejected_section_ids: patch.sections.map((s) => s.section_id).filter((id) => !accepted.includes(id)),
         master_cv_unchanged: true,
-        text: applyPatch(cv!, patch, accepted),
-      };
+        source_label: patch.source_label,
+        filename: cvFilename({ name: this.candidateName(facts, cv), company: jd.company, title: jd.title }),
+        text: applyPatch(cv, patch, accepted),
+      } as Record<string, any>;
+      const scored = scoreFit(jd, parseCv(content.text, cv.language), facts, { jdSnapshot: jdHash, masterCv: source.hash }, this.store.clock());
+      content.score_after = { fit: scored.fit_score.value, pct: scored.apply_to_interview_pct.value, band: scored.apply_to_interview_pct.band };
       const captured = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
         kind: "cv-accepted",
         evidenceType: "cv_accepted_version",
@@ -789,7 +945,7 @@ export class Apply2InterviewService {
       this.reactivateIfClear(wsId);
       this.proposeCvIfPossible(wsId, input.section_ids ?? [], patch);
     } else if (input.decision === "takeover" && takeover) {
-      this.finishTakeover(wsId, takeover, patch, cv!, masterCv!, facts, input.edited_sections!, review);
+      this.finishTakeover(wsId, takeover, patch, cv, masterCv!, facts, input.edited_sections!, review);
     } else {
       this.addLimitation(wsId, "limitation:cv-adaptation-declined");
     }
@@ -828,7 +984,7 @@ export class Apply2InterviewService {
     const captured = this.capture(wsId, { actorId: HUMAN_ACTOR_ID }, {
       kind: "cv-accepted",
       evidenceType: "cv_accepted_version",
-      content: { schema: "apply2interview.accepted_cv.v1", patch_ref: `artifact:cv-patch:v${patch.version}`, review_id: review.id, takeover_id: takeover.id, human_edited_section_ids: edits.map(([id]) => id), master_cv_unchanged: true, text },
+      content: { schema: "apply2interview.accepted_cv.v1", patch_ref: `artifact:cv-patch:v${patch.version}`, review_id: review.id, takeover_id: takeover.id, human_edited_section_ids: edits.map(([id]) => id), master_cv_unchanged: true, source_label: patch.source_label, filename: cvFilename({ name: this.candidateName(facts, cv), company: this.loadInputs(wsId).jd.company, title: this.loadInputs(wsId).jd.title }), text },
       trustLabel: "human_authored",
       summary: `HumanWorker edited ${edits.map(([id]) => id).join(", ")} under Takeover; truth guard passed.`,
     });
@@ -847,6 +1003,76 @@ export class Apply2InterviewService {
   }
 
   // ------------------------------------------------------ human actions
+
+  /** The CV file that goes with the application: the accepted version, else the best source CV unchanged. */
+  private attachment(wsId: string): { filename: string; content: string } | null {
+    const state = this.state(wsId);
+    const accepted = state.accepted_cv_ref ? this.store.getArtifact(state.accepted_cv_ref)?.content : null;
+    if (accepted?.text) return { filename: accepted.filename ?? "CV.md", content: accepted.text };
+    const { jd, facts, sources } = this.loadInputs(wsId);
+    const best = sources.find((s) => s.label === state.best_label) ?? sources[0];
+    if (!best) return null;
+    return { filename: cvFilename({ name: this.candidateName(facts, best.cv), company: jd.company, title: jd.title }), content: best.text };
+  }
+
+  /** Runs only inside a Review-approved ApprovalScope for the exact draft. */
+  private async sendApproved(wsId: string, request: ProtocolRecord, reviewId: string, confirmedTo: string | null): Promise<void> {
+    const decision = this.decide(wsId, "send_application_email", request.requested_action.target_ref, { approvalReviewId: reviewId });
+    const email = this.store.getArtifact(request.requested_action.target_ref)!.content as EmailDraft;
+    const to = confirmedTo ?? email.to;
+    const file = this.attachment(wsId);
+    const attachmentRef = file ? { filename: file.filename, content_hash: contentHash(file.content) } : null;
+    const handoff = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+      kind: "email-handoff",
+      evidenceType: "email_send_handoff",
+      content: { approved_draft_ref: request.requested_action.target_ref, review_id: reviewId, to, subject: email.subject, body: email.body, attachment: attachmentRef, delivery: this.mailer && to ? "host_mail_transport" : "human_sends_manually", sent_by_host: false },
+      trustLabel: "human_reviewed",
+      summary: this.mailer && to ? "Approved draft ready for the host mail transport." : "Approved draft handed to the HumanWorker for sending.",
+    });
+    this.setState(wsId, { email_handoff_ref: handoff.artifactRef });
+    if (!this.mailer) return;
+    if (!to) {
+      this.addLimitation(wsId, "limitation:no-recipient");
+      return;
+    }
+    try {
+      const receipt = await this.mailer({ to, subject: email.subject, body: email.body, attachments: file ? [file] : [] });
+      const captured = this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+        kind: "email-receipt",
+        evidenceType: "email_sent_receipt",
+        content: { message_ref: `message:${short(contentHash(receipt.id))}`, to, subject: email.subject, attachment: attachmentRef, sent_at: this.store.nowIso(), sent_by_host: true, review_id: reviewId },
+        trustLabel: "observed",
+        summary: `Email sent to ${to} after HumanWorker approval.`,
+      });
+      this.contribute(wsId, "shared", "submission", { events: [captured.eventId], artifacts: [captured.artifactRef], reviews: [reviewId], evidence: [captured.evidenceId] });
+      this.setState(wsId, { email_receipt_ref: captured.artifactRef, email_sent: true });
+    } catch (error) {
+      this.capture(wsId, { actorId: AGENT_ACTOR_ID, decision }, {
+        kind: "email-send-failure",
+        evidenceType: "email_send_failure",
+        content: { to, reason: String((error as Error).message ?? error).slice(0, 300), at: this.store.nowIso() },
+        trustLabel: "observed",
+        limitations: ["limitation:email-send-failed"],
+        summary: "Mail transport failed; the approved draft stays available to send by hand.",
+      });
+      this.addLimitation(wsId, "limitation:email-send-failed");
+    }
+  }
+
+  /**
+   * One click: the HumanWorker approves the recommended CV version (if still pending)
+   * and the exact email draft. Each approval is its own Review; sending happens only
+   * inside the email ApprovalScope.
+   */
+  async approveAndSend(wsId: string, input: { to?: string; version_ref?: string } = {}): Promise<void> {
+    const cvRequest = this.pendingRequests(wsId).find((r) => r.requested_action.action === "accept_cv_version");
+    if (cvRequest) {
+      await this.review(wsId, cvRequest.id, { decision: "approve", version_ref: input.version_ref, comments: "Aprobado con un clic (Aprobar y enviar)." });
+    }
+    const sendRequest = this.pendingRequests(wsId).find((r) => r.requested_action.action === "send_application_email");
+    if (!sendRequest) throw new UserError("No hay ningún email pendiente de aprobación.", 409);
+    await this.review(wsId, sendRequest.id, { decision: "approve", to: input.to, comments: "Aprobado con un clic (Aprobar y enviar)." });
+  }
 
   /** waiting_on_human -> active once every blocked scope is resolved. */
   private reactivateIfClear(wsId: string): void {
@@ -1080,9 +1306,35 @@ export class Apply2InterviewService {
         email_handoff: artifact(state.email_handoff_ref),
       },
       email_sent: Boolean(state.email_sent),
+      can_send_email: Boolean(this.mailer),
+      target_pct: TARGET_PCT,
+      best_label: state.best_label ?? null,
+      sources: this.sources(wsId).map((source) => ({ label: source.label, chars: source.text.length, content_hash: source.hash, text: source.text })),
+      full_jd_text: state.snapshot_ref ? (this.store.getArtifact(state.snapshot_ref)?.content?.text ?? null) : null,
+      evaluation: artifact(state.evaluation_ref),
+      source_scores: artifact(state.source_scores_ref),
+      email_receipt: artifact(state.email_receipt_ref),
+      form: this.form(wsId),
       learning_proposed: Boolean(state.learning_proposed),
       limitations: state.limitations ?? [],
     };
+  }
+
+  private form(wsId: string) {
+    const state = this.state(wsId);
+    if (!state.jd_ref || !state.email_ref) return null;
+    const { jd, facts, sources } = this.loadInputs(wsId);
+    const email = this.store.getArtifact(state.email_ref)!.content as EmailDraft;
+    const file = this.attachment(wsId);
+    return fillApplicationForm({
+      facts,
+      cvText: (sources.find((s) => s.label === state.best_label) ?? sources[0])?.text ?? "",
+      jd,
+      jobUrl: this.session(wsId).host.jobUrl,
+      cvFile: file?.filename ?? "",
+      coverLetter: email.body,
+      subject: email.subject,
+    });
   }
 
   listSessions(): ProtocolRecord[] {
@@ -1111,11 +1363,12 @@ export function normalizeFacts(raw: Record<string, unknown>): CandidateFacts {
   if (cleaned.length) facts.languages = cleaned;
   if (typeof raw.willing_to_relocate === "boolean") facts.willing_to_relocate = raw.willing_to_relocate;
   if (str(raw.other)) facts.other = str(raw.other);
+  for (const key of ["email", "phone", "linkedin", "availability"] as const) if (str(raw[key])) facts[key] = str(raw[key]);
   return facts;
 }
 
 export function factsText(facts: CandidateFacts): string {
-  return [facts.name, facts.location, facts.visa, ...(facts.languages ?? []), facts.other].filter(Boolean).join("\n");
+  return [facts.name, facts.location, facts.visa, ...(facts.languages ?? []), facts.other, facts.email, facts.phone, facts.linkedin, facts.availability].filter(Boolean).join("\n");
 }
 
 export { JarvisError };

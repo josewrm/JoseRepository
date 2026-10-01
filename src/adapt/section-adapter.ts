@@ -1,8 +1,8 @@
-import { ALL_TERMS, surfaceForm } from "../scoring/lexicon.ts";
-import { isBullet, sectionText, type CvSection, type ParsedCv } from "../scoring/cv.ts";
+import { ALL_TERMS, surfaceForm, textHasTerm } from "../scoring/lexicon.ts";
+import { DATE_RANGE, isBullet, sectionText, type CvSection, type ParsedCv } from "../scoring/cv.ts";
 import type { StructuredJd } from "../scoring/jd.ts";
 import { lineHits, type ScoreSheet } from "../scoring/score.ts";
-import { TEMPLATE_PREFIXES, checkTruth, isTemplateLine } from "./truth-guard.ts";
+import { SKILL_TEMPLATE_PREFIXES, TEMPLATE_PREFIXES, checkTruth, isTemplateLine } from "./truth-guard.ts";
 
 /**
  * cvs_best_version: a section patch, not a new biography.
@@ -16,7 +16,9 @@ export interface SectionPatch {
   heading: string | null;
   before: string;
   after: string;
-  change: "reordered" | "reordered_and_summary_terms";
+  change: "reordered" | "reordered_and_summary_terms" | "enriched_from_source_cvs";
+  /** Labels of the candidate's other source CVs whose lines were used here. */
+  sources_used: string[];
   jd_requirements_addressed: string[];
   evidence_quotes: string[];
   invented: false;
@@ -32,6 +34,13 @@ export interface CvPatch {
   truth_guard: { passed: true; checked_sections: number };
   derived_from_version: number | null;
   dropped_section_ids: string[];
+  source_label: string;
+}
+
+/** Another of the candidate's own CVs. Its lines are facts too, but stay with their own role. */
+export interface SourceCv {
+  label: string;
+  cv: ParsedCv;
 }
 
 const SPLIT = /\s*([,;|·])\s*/;
@@ -68,12 +77,12 @@ function quotes(lines: string[], terms: string[]): string[] {
   return lines.filter((l) => lineHits(l, terms) > 0 && !isTemplateLine(l)).map((l) => l.replace(/^\s*[-–•*·▪]\s+/, "").trim()).slice(0, 4);
 }
 
-function adaptSummary(section: CvSection, terms: string[], cv: ParsedCv): { lines: string[]; addedTerms: boolean } {
+function adaptSummary(section: CvSection, terms: string[], cv: ParsedCv, unionText: string): { lines: string[]; addedTerms: boolean } {
   const body = section.lines.filter((l) => l.trim());
   const sentences = body.length === 1 ? body[0].split(/(?<=[.!?])\s+/) : body;
   const sorted = stableSortBy(sentences, (s) => lineHits(s, terms));
   const present = terms
-    .map((term) => surfaceForm(ALL_TERMS, term, cv.text))
+    .map((term) => surfaceForm(ALL_TERMS, term, cv.text) ?? surfaceForm(ALL_TERMS, term, unionText))
     .filter((form): form is string => Boolean(form))
     .filter((form, index, all) => all.findIndex((f) => f.toLowerCase() === form.toLowerCase()) === index)
     .slice(0, 6);
@@ -97,9 +106,51 @@ function adaptBlock(section: CvSection, terms: string[]): string[] {
   return [...header, ...stableSortBy(bullets, (l) => lineHits(l, terms)), ...others];
 }
 
-function adaptSkills(section: CvSection, terms: string[]): string[] {
-  const lines = section.lines.filter((l) => l.trim()).map((line) => reorderList(line, terms));
-  return stableSortBy(lines, (l) => lineHits(l, terms));
+function adaptSkills(section: CvSection, terms: string[], cv: ParsedCv, others: SourceCv[]): { lines: string[]; used: string[] } {
+  const lines = stableSortBy(section.lines.filter((l) => l.trim()).map((line) => reorderList(line, terms)), (l) => lineHits(l, terms));
+  // JD terms listed in the skills of the candidate's other CVs but missing here.
+  const added: string[] = [];
+  const used = new Set<string>();
+  for (const term of terms) {
+    if (textHasTerm(ALL_TERMS, term, cv.text)) continue;
+    for (const other of others) {
+      const skillsText = other.cv.sections.filter((s) => s.kind === "skills").map(sectionText).join("\n");
+      const form = surfaceForm(ALL_TERMS, term, skillsText);
+      if (form && !added.some((a) => a.toLowerCase() === form.toLowerCase())) {
+        added.push(form);
+        used.add(other.label);
+        break;
+      }
+    }
+  }
+  if (added.length) lines.push(`${SKILL_TEMPLATE_PREFIXES[cv.language] ?? SKILL_TEMPLATE_PREFIXES.en} ${added.join(", ")}.`);
+  return { lines, used: [...used] };
+}
+
+/** Same role in another CV: same dated range and at least one shared name token in the role header. */
+function roleKey(section: CvSection): { range: string; names: Set<string> } | null {
+  const header = section.lines.filter((l) => !isBullet(l) && l.trim());
+  const dated = header.find((l) => DATE_RANGE.test(l));
+  if (!dated) return null;
+  const range = DATE_RANGE.exec(dated)![0].toLowerCase().replace(/\s+/g, "").replace(/[–—]/g, "-");
+  const names = new Set(header.join(" ").match(/\p{Lu}[\p{L}&.-]{3,}/gu) ?? []);
+  return { range, names };
+}
+
+function matchingRoleLines(section: CvSection, cv: ParsedCv, others: SourceCv[]): { lines: string[]; label: string }[] {
+  const key = roleKey(section);
+  if (!key) return [];
+  const out: { lines: string[]; label: string }[] = [];
+  for (const other of others) {
+    if (other.cv.language !== cv.language) continue; // keep one language per CV
+    for (const candidate of other.cv.sections.filter((s) => s.kind === "experience")) {
+      const k = roleKey(candidate);
+      if (k && k.range === key.range && [...k.names].some((n) => key.names.has(n))) {
+        out.push({ lines: candidate.lines.filter(isBullet), label: other.label });
+      }
+    }
+  }
+  return out;
 }
 
 export interface AdaptOptions {
@@ -109,11 +160,18 @@ export interface AdaptOptions {
   dropSectionIds?: string[];
   factsText?: string;
   hashes: { masterCv: string; jdSnapshot: string };
+  /** The candidate's other source CVs. */
+  otherSources?: SourceCv[];
+  sourceLabel?: string;
 }
 
 export function buildCvPatch(cv: ParsedCv, jd: StructuredJd, score: ScoreSheet, options: AdaptOptions): CvPatch {
   const terms = [...new Set([...jd.keywords, ...score.requirements.flatMap((r) => [...r.matched_keywords, ...r.missing_keywords])])];
   const drop = new Set(options.dropSectionIds ?? []);
+  const others = options.otherSources ?? [];
+  const unionText = [cv.text, ...others.map((o) => o.cv.text)].join("\n");
+  const norm = (l: string) => l.replace(/^\s*[-–•*·▪]\s+/, "").replace(/\s+/g, " ").trim();
+  const sectionLines: Record<string, string[]> = {};
   const touchedExperience = cv.sections
     .filter((s) => s.kind === "experience")
     .map((s) => ({ s, hits: linesWithHits(s.lines, terms) }))
@@ -127,14 +185,33 @@ export function buildCvPatch(cv: ParsedCv, jd: StructuredJd, score: ScoreSheet, 
     if (drop.has(section.id)) continue;
     let lines: string[] | null = null;
     let addedTerms = false;
+    let used: string[] = [];
     if (section.kind === "summary") {
-      const result = adaptSummary(section, terms, cv);
+      const result = adaptSummary(section, terms, cv, unionText);
       lines = result.lines;
       addedTerms = result.addedTerms;
     } else if (section.kind === "skills") {
-      lines = adaptSkills(section, terms);
-    } else if (section.kind === "experience" && touchedExperience.includes(section.id)) {
-      lines = adaptBlock(section, terms);
+      const result = adaptSkills(section, terms, cv, others);
+      lines = result.lines;
+      used = result.used;
+    } else if (section.kind === "experience") {
+      // Bullets for this same role from the candidate's other CVs (same language) that the JD touches.
+      const matches = matchingRoleLines(section, cv, others);
+      const have = new Set(section.lines.map(norm));
+      const extra: string[] = [];
+      for (const match of matches) {
+        for (const line of match.lines) {
+          if (!have.has(norm(line)) && lineHits(line, terms) > 0) {
+            have.add(norm(line));
+            extra.push(line);
+            if (!used.includes(match.label)) used.push(match.label);
+          }
+        }
+      }
+      sectionLines[section.id] = [...section.lines, ...matches.flatMap((m) => m.lines)];
+      if (extra.length || touchedExperience.includes(section.id)) {
+        lines = adaptBlock({ ...section, lines: [...section.lines, ...extra] }, terms);
+      }
     }
     if (!lines) continue;
     const before = sectionText(section);
@@ -145,7 +222,8 @@ export function buildCvPatch(cv: ParsedCv, jd: StructuredJd, score: ScoreSheet, 
       heading: section.heading,
       before,
       after,
-      change: addedTerms ? "reordered_and_summary_terms" : "reordered",
+      change: used.length ? "enriched_from_source_cvs" : addedTerms ? "reordered_and_summary_terms" : "reordered",
+      sources_used: used,
       jd_requirements_addressed: requirementsAddressed(after, score),
       evidence_quotes: quotes(lines, terms),
       invented: false,
@@ -153,7 +231,7 @@ export function buildCvPatch(cv: ParsedCv, jd: StructuredJd, score: ScoreSheet, 
   }
 
   // Hard fail on any fact that is not in the master CV or candidate facts.
-  checkTruth(patches.map((p) => ({ section_id: p.section_id, after: p.after })), cv.text, options.factsText ?? "");
+  checkTruth(patches.map((p) => ({ section_id: p.section_id, after: p.after })), unionText, options.factsText ?? "", { sectionLines });
 
   return {
     schema: "apply2interview.cv_patch.v1",
@@ -165,6 +243,7 @@ export function buildCvPatch(cv: ParsedCv, jd: StructuredJd, score: ScoreSheet, 
     truth_guard: { passed: true, checked_sections: patches.length },
     derived_from_version: options.derivedFromVersion ?? null,
     dropped_section_ids: [...drop],
+    source_label: options.sourceLabel ?? "master",
   };
 }
 

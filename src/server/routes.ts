@@ -74,6 +74,10 @@ export async function handleApi(deps: RouteDeps, req: ApiRequest): Promise<ApiRe
       await service.review(m[1], m[2], body);
       return service.view(m[1]);
     }],
+    ["POST", /^\/api\/sessions\/([\w-]+)\/approve-and-send$/, async (m, body) => {
+      await service.approveAndSend(m[1], { to: body.to ? String(body.to) : undefined, version_ref: body.version_ref ? String(body.version_ref) : undefined });
+      return service.view(m[1]);
+    }],
     ["POST", /^\/api\/sessions\/([\w-]+)\/email-sent$/, (m, body) => {
       service.markEmailSent(m[1], body.note);
       return service.view(m[1]);

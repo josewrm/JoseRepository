@@ -17,10 +17,12 @@
     "build:artifact": "node --disable-warning=ExperimentalWarning scripts/build-artifact.ts"
   },
   "dependencies": {
-    "@jarvis-protocol/sdk": "file:../jarvis/packages/typescript"
+    "@jarvis-protocol/sdk": "file:../jarvis/packages/typescript",
+    "nodemailer": "^6.10.1"
   },
   "devDependencies": {
     "@types/node": "^22.16.5",
+    "@types/nodemailer": "^6.4.24",
     "esbuild": "^0.25.12",
     "typescript": "^5.9.0"
   }
