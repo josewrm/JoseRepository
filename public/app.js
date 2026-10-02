@@ -913,21 +913,84 @@ function bindAssistant(scope = main) {
   });
 }
 
-// voice: Web Speech API where the browser allows it; typing and tapping always work.
-// One tap latches the mic on: it keeps listening (and restarts after pauses) until tapped again.
+// voice: two ways in, chosen by what the page is allowed to do.
+//  1. Speech recognition (Web Speech API) where the page may use the microphone (local version in Chrome).
+//     One tap latches it on; it restarts after pauses until tapped again.
+//  2. Dictation mode where the microphone is blocked (the claude.ai artifact frame does not grant it):
+//     the operating system's dictation types into the command box, and each phrase is sent after a pause.
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const DICTATION_HINT = "Dictado: Windows Win+H · Mac Fn Fn (o Control dos veces) · móvil: 🎤 del teclado. Se envía solo al hacer una pausa.";
+const DEFAULT_PLACEHOLDER = document.getElementById("cmd-text").placeholder;
 let recognizer = null;
 let micLatched = false;
+let dictation = false;
+let dictTimer = null;
 let quietUntil = 0;
+
+/** "no" when this frame may not use the microphone; "unknown" otherwise (the browser decides on start). */
+async function micAllowed() {
+  const policy = document.permissionsPolicy || document.featurePolicy;
+  try {
+    if (policy?.allowsFeature && !policy.allowsFeature("microphone")) return "no";
+  } catch { /* older browsers */ }
+  try {
+    const state = await navigator.permissions?.query({ name: "microphone" });
+    if (state?.state === "denied") return "no";
+  } catch { /* permission name not supported */ }
+  return "unknown";
+}
 
 function micUi() {
   const mic = document.getElementById("mic");
+  const input = document.getElementById("cmd-text");
   mic.classList.toggle("on", micLatched);
   mic.setAttribute("aria-pressed", String(micLatched));
-  mic.title = micLatched ? "Escuchando: toca para parar" : "Toca para hablar (se queda escuchando)";
+  mic.title = !micLatched ? "Toca para hablar (se queda escuchando)" : dictation ? "Dictado activo: toca para parar" : "Escuchando: toca para parar";
+  input.placeholder = dictation ? DICTATION_HINT : DEFAULT_PLACEHOLDER;
+  input.classList.toggle("dictating", dictation);
   const st = document.getElementById("orb-state");
-  if (st) st.textContent = micLatched ? "escuchando" : "jarvis";
+  if (st) st.textContent = !micLatched ? "jarvis" : dictation ? "dictado" : "escuchando";
 }
+
+function stopVoice() {
+  micLatched = false;
+  dictation = false;
+  listening = false;
+  clearTimeout(dictTimer);
+  try { recognizer?.stop(); } catch { /* already stopped */ }
+  recognizer = null;
+  micUi();
+}
+
+function startDictation(reason) {
+  try { recognizer?.abort(); } catch { /* ignore */ }
+  recognizer = null;
+  micLatched = true;
+  dictation = true;
+  listening = true;
+  micUi();
+  const input = document.getElementById("cmd-text");
+  input.focus();
+  toast(`${reason} Usa el dictado de tu sistema: ${DICTATION_HINT.replace("Dictado: ", "")}`);
+}
+
+function sendDictated() {
+  const input = document.getElementById("cmd-text");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  busy(() => runCommand(text)).then(() => { if (dictation) input.focus(); });
+}
+
+document.getElementById("cmd-text").addEventListener("input", (e) => {
+  if (!dictation) return;
+  // Dictation inserts text in bursts; a pause means the phrase is finished.
+  clearTimeout(dictTimer);
+  if (e.target.value.trim()) dictTimer = setTimeout(sendDictated, 1600);
+});
+document.getElementById("cmd-text").addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && micLatched) stopVoice();
+});
 
 function startRecognizer() {
   const input = document.getElementById("cmd-text");
@@ -948,41 +1011,36 @@ function startRecognizer() {
     }
   };
   recognizer.onerror = (event) => {
-    if (["not-allowed", "service-not-allowed", "audio-capture"].includes(event.error)) {
-      micLatched = false;
-      micUi();
-      toast(event.error === "audio-capture" ? "No encuentro un micrófono." : "El micrófono está bloqueado en esta vista. Permite el micrófono o abre la versión local (npm start) en Chrome; mientras tanto escribe la orden.");
+    if (["not-allowed", "service-not-allowed"].includes(event.error)) {
+      startDictation("El navegador no deja usar el micrófono en esta vista.");
+    } else if (event.error === "audio-capture") {
+      stopVoice();
+      toast("No encuentro un micrófono.");
     }
     // no-speech / aborted / network: onend restarts while the mic is latched.
   };
   recognizer.onend = () => {
+    if (dictation) return;
     listening = false;
-    if (micLatched) setTimeout(() => { if (micLatched) startRecognizer(); }, 250);
+    if (micLatched) setTimeout(() => { if (micLatched && !dictation) startRecognizer(); }, 250);
     else micUi();
   };
   try {
     recognizer.start();
     listening = true;
   } catch (error) {
-    micLatched = false;
-    toast(`Voz no disponible: ${error.message}`);
+    startDictation(`El reconocimiento de voz no arrancó (${error.message}).`);
+    return;
   }
   micUi();
 }
 
-document.getElementById("mic").addEventListener("click", () => {
-  if (micLatched) {
-    micLatched = false;
-    recognizer?.stop();
-    micUi();
-    return;
-  }
-  if (!Recognition) {
-    toast("Este navegador no permite reconocimiento de voz aquí. Escribe la orden o usa los botones.");
-    document.getElementById("cmd-text").focus();
-    return;
-  }
+document.getElementById("mic").addEventListener("click", async () => {
+  if (micLatched) return stopVoice();
+  if (!Recognition) return startDictation("Este navegador no tiene reconocimiento de voz.");
+  if ((await micAllowed()) === "no") return startDictation("Esta vista no tiene permiso de micrófono.");
   micLatched = true;
+  dictation = false;
   startRecognizer();
 });
 document.getElementById("cmd").addEventListener("submit", (e) => {

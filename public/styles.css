@@ -360,3 +360,6 @@ a.easy { display: block; text-align: center; text-decoration: none; }
 .mic { position: relative; }
 @keyframes ring { from { transform: scale(.9); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mic[aria-pressed="true"]::after { animation: none; } }
+/* dictation mode: the command box is where the system dictation types */
+.cmd input.dictating { border-color: var(--mint); box-shadow: 0 0 0 3px rgb(111 211 255 / 25%), 0 0 26px rgb(79 179 255 / 55%); }
+.cmd input.dictating::placeholder { color: var(--mint); opacity: .9; }
